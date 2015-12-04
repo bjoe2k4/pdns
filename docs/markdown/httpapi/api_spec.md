@@ -893,6 +893,20 @@ The statistic entries are dependent on the daemon type.
 Values are returned as strings.
 
 
+Authoritative: the statistics are:
+
+* with type = "StatisticItem": [Standard Performance Counters](../authoritative/performance.md#counters-variables)
+* with type = "QueryTypeStatisticItem": per-qtype query counters (same as `pdns_control qtypes`)
+* with type = "ResponseSizeStatisticItem": response size histogram (same as `pdns_control respsizes`)
+
+
+Recursor: the statistics are:
+
+* with type = "StatisticItem": [Standard Performance Counters](../authoritative/performance.md#counters-variables)
+* with type = "QueryTypeStatisticItem": per-qtype query counters (same as `pdns_control qtypes`)
+* with type = "ResponseSizeStatisticItem": response size histogram (same as `pdns_control respsizes`)
+
+
 URL: /api/v1/servers/:server\_id/trace
 --------------------------------------
 

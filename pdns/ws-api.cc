@@ -29,14 +29,22 @@
 #include "json.hh"
 #include "version.hh"
 #include "arguments.hh"
+#include "dnsparser.hh"
+#include "responsestats.hh"
+#include "statbag.hh"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 #include <sys/types.h>
 #include <iomanip>
 
-extern string s_programname;
 using json11::Json;
+
+extern string s_programname;
+extern ResponseStats g_rs;
+#ifndef RECURSOR
+extern StatBag S;
+#endif
 
 #ifndef HAVE_STRCASESTR
 
@@ -195,8 +203,16 @@ void apiServerStatistics(HttpRequest* req, HttpResponse* resp) {
   if(req->method != "GET")
     throw HttpMethodNotAllowedException();
 
-  map<string,string> items;
-  productServerStatisticsFetch(items);
+  typedef map<string, string> stat_items_t;
+  stat_items_t general_stats;
+  productServerStatisticsFetch(general_stats);
+
+  typedef map<uint16_t, uint64_t> resp_stat_t;
+  resp_stat_t resp_qtype_stats;
+  resp_stat_t resp_size_stats;
+
+  resp_qtype_stats = g_rs.getQTypeResponseCounts();
+  resp_size_stats = g_rs.getSizeResponseCounts();
 
   Json::array doc;
   typedef map<string, string> items_t;
@@ -207,6 +223,66 @@ void apiServerStatistics(HttpRequest* req, HttpResponse* resp) {
       { "value", item.second },
     });
   }
+
+  {
+    Json::array values;
+    for(const auto& item : resp_qtype_stats) {
+      if (item.second == 0)
+        continue;
+      values.push_back(Json::object {
+        { "name", DNSRecordContent::NumberToType(item.first) },
+        { "value", lexical_cast<string>(item.second) },
+      });
+    }
+
+    doc.push_back(Json::object {
+      { "type", "MapStatisticItem" },
+      { "name", "queries-by-qtype" },
+      { "value", values },
+    });
+  }
+
+  {
+    Json::array values;
+    for(const auto& item : resp_size_stats) {
+      if (item.second == 0)
+        continue;
+
+      values.push_back(Json::object {
+        { "name", lexical_cast<string>(item.first) },
+        { "value", lexical_cast<string>(item.second) },
+      });
+    }
+
+    doc.push_back(Json::object {
+      { "type", "MapStatisticItem" },
+      { "name", "response-sizes" },
+      { "value", values },
+    });
+  }
+
+#ifndef RECURSOR
+  for(const auto& ringName : S.listRings()) {
+    Json::array values;
+    const auto& ring = S.getRing(ringName);
+    for(const auto& item : ring) {
+      if (item.second == 0)
+        continue;
+
+      values.push_back(Json::object {
+        { "name", lexical_cast<string>(item.first) },
+        { "value", lexical_cast<string>(item.second) },
+      });
+    }
+
+    doc.push_back(Json::object {
+      { "type", "RingStatisticItem" },
+      { "name", ringName },
+      { "size", lexical_cast<string>(S.getRingSize(ringName)) },
+      { "value", values },
+    });
+  }
+#endif
 
   resp->setBody(doc);
 }

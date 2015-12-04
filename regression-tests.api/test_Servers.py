@@ -39,5 +39,10 @@ class Servers(ApiTestCase):
     def test_read_statistics(self):
         r = self.session.get(self.url("/api/v1/servers/localhost/statistics"))
         self.assert_success_json(r)
-        data = dict([(r['name'], r['value']) for r in r.json()])
-        self.assertIn('uptime', data)
+        data = r.json()
+        self.assertIn('uptime', [e['name'] for e in data])
+        if is_auth():
+            qtype_stats = [e for e in data if e['type'] == 'QueryTypeStatisticItem']
+            self.assertIn('queries-by-qtype.A', [e['name'] for e in qtype_stats])
+            respsize_stats = [e for e in data if e['type'] == 'ResponseSizeStatisticItem']
+            self.assertIn('response-sizes.60', [e['name'] for e in respsize_stats])
