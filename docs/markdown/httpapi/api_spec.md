@@ -335,7 +335,7 @@ zone_collection
   or cryptokeys.
   **Note**: Authoritative only.
 
-  **TODO**: `dnssec`, `nsec3narrow`, `nsec3param`, `presigned` are not yet implemented.
+  **TODO**: `presigned` is not yet implemented.
 
 * `soa_edit` MAY be set to change the `SOA-EDIT` zone setting. See
   [the `SOA-EDIT` documentation](../authoritative/domainmetadata.md#soa-edit)
@@ -381,10 +381,9 @@ at least one of them `active` set to `true`. **TODO**: not yet
 implemented.
 
 Changes made through the Zones API will always yield valid zone data,
-and the zone will be properly "rectified" (**TODO**: not yet
-implemented). If changes are made through other means (e.g. direct
-database access), this is not guaranteed to be true and clients SHOULD
-trigger rectify.
+and the zone will be properly "rectified". If changes are made through
+other means (e.g. direct database access), this is not guaranteed to
+be true and clients SHOULD trigger rectify.
 
 Backends might implement additional features (by coincidence or not).
 These things are not supported through the API.
@@ -412,7 +411,7 @@ the records list.
 If `soa_edit_api` is set, the SOA record is edited according to the SOA-EDIT-API
 rules before storing it. (Also applies to custom SOA records.)
 
-**TODO**: `dnssec`, `nsec3narrow`, `nsec3param`, `presigned` are not yet implemented.
+**TODO**: `presigned` is not yet implemented.
 
 URL: /api/v1/servers/:server\_id/zones/:zone\_id
 ------------------------------------------------
