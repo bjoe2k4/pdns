@@ -74,23 +74,29 @@ void primeHints(void)
     }
   }
   else {
-    ZoneParserTNG zpt(::arg()["hint-file"]);
-    DNSResourceRecord rr;
+    try {
+      ZoneParserTNG zpt(::arg()["hint-file"]);
+      DNSResourceRecord rr;
 
-    while(zpt.get(rr)) {
-      rr.ttl+=time(0);
-      if(rr.qtype.getCode()==QType::A) {
-        vector<DNSRecord> aset;
-        aset.push_back(DNSRecord(rr));
-        t_RC->replace(time(0), rr.qname, QType(QType::A), aset, vector<std::shared_ptr<RRSIGRecordContent>>(), true); // auth, etc see above
-      } else if(rr.qtype.getCode()==QType::AAAA) {
-        vector<DNSRecord> aaaaset;
-        aaaaset.push_back(DNSRecord(rr));
-        t_RC->replace(time(0), rr.qname, QType(QType::AAAA), aaaaset, vector<std::shared_ptr<RRSIGRecordContent>>(), true);
-      } else if(rr.qtype.getCode()==QType::NS) {
-        rr.content=toLower(rr.content);
-        nsset.push_back(DNSRecord(rr));
+      while(zpt.get(rr)) {
+        rr.ttl+=time(0);
+        if(rr.qtype.getCode()==QType::A) {
+          vector<DNSRecord> aset;
+          aset.push_back(DNSRecord(rr));
+          t_RC->replace(time(0), rr.qname, QType(QType::A), aset, vector<std::shared_ptr<RRSIGRecordContent>>(), true); // auth, etc see above
+        } else if(rr.qtype.getCode()==QType::AAAA) {
+          vector<DNSRecord> aaaaset;
+          aaaaset.push_back(DNSRecord(rr));
+          t_RC->replace(time(0), rr.qname, QType(QType::AAAA), aaaaset, vector<std::shared_ptr<RRSIGRecordContent>>(), true);
+        } else if(rr.qtype.getCode()==QType::NS) {
+          rr.content=toLower(rr.content);
+          nsset.push_back(DNSRecord(rr));
+        }
       }
+    }
+    catch(runtime_error &e) {
+      L<<Logger::Error<<"Unable to read hint-file: "<<e.what()<<endl;
+      _exit(1);
     }
   }
   t_RC->replace(time(0), DNSName("."), QType(QType::NS), nsset, vector<std::shared_ptr<RRSIGRecordContent>>(), true); // and stuff in the cache (auth)
