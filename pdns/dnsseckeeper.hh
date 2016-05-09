@@ -169,6 +169,17 @@ public:
   bool deactivateKey(const DNSName& zname, unsigned int id);
   bool checkKeys(const DNSName& zname);
 
+  typedef struct {
+    bool isDnssecZone{false};
+    bool isPresigned{false};
+    bool isNSEC3{false};
+    bool optOutFlag{false};
+    bool isNarrow{false};
+    NSEC3PARAMRecordContent ns3pr;
+  } guessedZoneSemantics;
+
+  static void guessZoneSemantics(const DNSName& zname, const vector<DNSResourceRecord>& records, guessedZoneSemantics& semantics);
+
   bool getNSEC3PARAM(const DNSName& zname, NSEC3PARAMRecordContent* n3p=0, bool* narrow=0);
   bool setNSEC3PARAM(const DNSName& zname, const NSEC3PARAMRecordContent& n3p, const bool& narrow=false);
   bool unsetNSEC3PARAM(const DNSName& zname);

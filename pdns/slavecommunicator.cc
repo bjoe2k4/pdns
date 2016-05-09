@@ -127,26 +127,21 @@ void CommunicatorClass::suck(const DNSName &domain,const string &remote)
     bool hadDnssecZone = false;
     bool hadPresigned = false;
     bool hadNSEC3 = false;
-    NSEC3PARAMRecordContent ns3pr, hadNs3pr;
-    bool isNarrow, hadNarrow=false;
+    NSEC3PARAMRecordContent hadNs3pr;
+    bool hadNarrow=false;
+    DNSSECKeeper::guessedZoneSemantics semantics;
 
     if(dk.isSecuredZone(domain)) {
       hadDnssecZone=true;
       hadPresigned=dk.isPresigned(domain);
-      if (dk.getNSEC3PARAM(domain, &ns3pr, &isNarrow)) {
+      if (dk.getNSEC3PARAM(domain, &semantics.ns3pr, &semantics.isNarrow)) {
         hadNSEC3 = true;
-        hadNs3pr = ns3pr;
-        hadNarrow = isNarrow;
+        hadNs3pr = semantics.ns3pr;
+        hadNarrow = semantics.isNarrow;
       }
     }
 
-    bool isDnssecZone = false;
-    bool isPresigned = false;
-    bool isNSEC3 = false;
-    bool optOutFlag = false;
-
     bool first=true;
-    bool firstNSEC3=true;
     bool soa_received = false;
     unsigned int soa_serial = 0;
     set<DNSName> nsset, qnames, secured;
@@ -175,32 +170,10 @@ void CommunicatorClass::suck(const DNSName &domain,const string &remote)
           out.push_back(*i);
         }
 
+       DNSSECKeeper::guessZoneSemantics(domain, out, semantics);
+
         for(DNSResourceRecord& rr :  out) {
           switch(rr.qtype.getCode()) {
-            case QType::NSEC3PARAM: {
-              ns3pr = NSEC3PARAMRecordContent(rr.content);
-              isDnssecZone = isNSEC3 = true;
-              isNarrow = false;
-              continue;
-            }
-            case QType::NSEC3: {
-              NSEC3RecordContent ns3rc(rr.content);
-              if (firstNSEC3) {
-                isDnssecZone = isPresigned = true;
-                firstNSEC3 = false;
-              } else if (optOutFlag != (ns3rc.d_flags & 1))
-                throw PDNSException("Zones with a mixture of Opt-Out NSEC3 RRs and non-Opt-Out NSEC3 RRs are not supported.");
-              optOutFlag = ns3rc.d_flags & 1;
-              if (ns3rc.d_set.count(QType::NS) && !(rr.qname==domain)) {
-                DNSName hashPart = DNSName(toLower(rr.qname.makeRelative(domain).toString()));
-                secured.insert(hashPart);
-              }
-              continue;
-            }
-            case QType::NSEC: {
-              isDnssecZone = isPresigned = true;
-              continue;
-            }
             case QType::SOA: {
               if(soa_received)
                 continue; //skip the last SOA
@@ -215,6 +188,14 @@ void CommunicatorClass::suck(const DNSName &domain,const string &remote)
                 nsset.insert(rr.qname);
               break;
             }
+            case QType::NSEC3: {
+              NSEC3RecordContent ns3rc(rr.content);
+              if (ns3rc.d_set.count(QType::NS) && !(rr.qname==domain)) {
+                DNSName hashPart = DNSName(toLower(rr.qname.makeRelative(domain).toString()));
+                secured.insert(hashPart);
+              }
+              break;
+            }
             default:
               break;
           }
@@ -227,27 +208,21 @@ void CommunicatorClass::suck(const DNSName &domain,const string &remote)
       }
     }
 
-    if(isNSEC3) {
-      ns3pr.d_flags = optOutFlag ? 1 : 0;
-    }
-
-
-    if(!isPresigned) {
+    if(!semantics.isPresigned) {
       DNSSECKeeper::keyset_t keys = dk.getKeys(domain);
       if(!keys.empty()) {
-        isDnssecZone = true;
-        isNSEC3 = hadNSEC3;
-        ns3pr = hadNs3pr;
-        optOutFlag = (hadNs3pr.d_flags & 1);
-        isNarrow = hadNarrow;
+        semantics.isDnssecZone = true;
+        semantics.isNSEC3 = hadNSEC3;
+        semantics.ns3pr = hadNs3pr;
+        semantics.optOutFlag = (hadNs3pr.d_flags & 1);
+        semantics.isNarrow = hadNarrow;
       }
     }
 
-
-    if(isDnssecZone) {
-      if(!isNSEC3)
+    if(semantics.isDnssecZone) {
+      if(!semantics.isNSEC3)
         L<<Logger::Info<<"Adding NSEC ordering information"<<endl;
-      else if(!isNarrow)
+      else if(!semantics.isNarrow)
         L<<Logger::Info<<"Adding NSEC3 hashed ordering information for '"<<domain<<"'"<<endl;
       else
         L<<Logger::Info<<"Erasing NSEC3 ordering since we are narrow, only setting 'auth' fields"<<endl;
@@ -258,24 +233,24 @@ void CommunicatorClass::suck(const DNSName &domain,const string &remote)
     L<<Logger::Error<<"Transaction started for '"<<domain<<"'"<<endl;
 
     // update the presigned flag and NSEC3PARAM
-    if (isDnssecZone) {
+    if (semantics.isDnssecZone) {
       // update presigned if there was a change
-      if (isPresigned && !hadPresigned) {
+      if (semantics.isPresigned && !hadPresigned) {
         // zone is now presigned
         dk.setPresigned(domain);
-      } else if (hadPresigned && !isPresigned) {
+      } else if (hadPresigned && !semantics.isPresigned) {
         // zone is no longer presigned
         dk.unsetPresigned(domain);
       }
       // update NSEC3PARAM
-      if (isNSEC3) {
+      if (semantics.isNSEC3) {
         // zone is NSEC3, only update if there was a change
-        if (!hadNSEC3 || (hadNarrow  != isNarrow) ||
-            (ns3pr.d_algorithm != hadNs3pr.d_algorithm) ||
-            (ns3pr.d_flags != hadNs3pr.d_flags) ||
-            (ns3pr.d_iterations != hadNs3pr.d_iterations) ||
-            (ns3pr.d_salt != hadNs3pr.d_salt)) {
-          dk.setNSEC3PARAM(domain, ns3pr, isNarrow);
+        if (!hadNSEC3 || (hadNarrow  != semantics.isNarrow) ||
+            (semantics.ns3pr.d_algorithm != hadNs3pr.d_algorithm) ||
+            (semantics.ns3pr.d_flags != hadNs3pr.d_flags) ||
+            (semantics.ns3pr.d_iterations != hadNs3pr.d_iterations) ||
+            (semantics.ns3pr.d_salt != hadNs3pr.d_salt)) {
+          dk.setNSEC3PARAM(domain, semantics.ns3pr, semantics.isNarrow);
         }
       } else if (hadNSEC3 ) {
          // zone is no longer NSEC3
@@ -303,10 +278,10 @@ void CommunicatorClass::suck(const DNSName &domain,const string &remote)
 
     for(DNSResourceRecord& rr :  rrs) {
 
-      if(!isPresigned) {
+      if(!semantics.isPresigned) {
         if (rr.qtype.getCode() == QType::RRSIG)
           continue;
-        if(isDnssecZone && rr.qtype.getCode() == QType::DNSKEY && !::arg().mustDo("direct-dnskey"))
+        if(semantics.isDnssecZone && rr.qtype.getCode() == QType::DNSKEY && !::arg().mustDo("direct-dnskey"))
           continue;
       }
 
@@ -330,9 +305,9 @@ void CommunicatorClass::suck(const DNSName &domain,const string &remote)
       if(doent && !rrterm.empty()) {
         bool auth;
         if (!rr.auth && rr.qtype.getCode() == QType::NS) {
-          if (isNSEC3)
-            ordername=toBase32Hex(hashQNameWithSalt(ns3pr, rr.qname));
-          auth=(!isNSEC3 || !optOutFlag || secured.count(DNSName(ordername)));
+          if (semantics.isNSEC3)
+            ordername=toBase32Hex(hashQNameWithSalt(semantics.ns3pr, rr.qname));
+          auth=(!semantics.isNSEC3 || !semantics.optOutFlag || secured.count(DNSName(ordername)));
         } else
           auth=rr.auth;
 
@@ -355,11 +330,11 @@ void CommunicatorClass::suck(const DNSName &domain,const string &remote)
         rr.auth=true;
 
       // Add ordername and insert record
-      if (isDnssecZone && rr.qtype.getCode() != QType::RRSIG) {
-        if (isNSEC3) {
+      if (semantics.isDnssecZone && rr.qtype.getCode() != QType::RRSIG) {
+        if (semantics.isNSEC3) {
           // NSEC3
-          ordername=toBase32Hex(hashQNameWithSalt(ns3pr, rr.qname));
-          if(!isNarrow && (rr.auth || (rr.qtype.getCode() == QType::NS && (!optOutFlag || secured.count(DNSName(ordername)))))) {
+          ordername=toBase32Hex(hashQNameWithSalt(semantics.ns3pr, rr.qname));
+          if(!semantics.isNarrow && (rr.auth || (rr.qtype.getCode() == QType::NS && (!semantics.optOutFlag || secured.count(DNSName(ordername)))))) {
             di.backend->feedRecord(rr, &ordername);
           } else
             di.backend->feedRecord(rr);
@@ -377,8 +352,8 @@ void CommunicatorClass::suck(const DNSName &domain,const string &remote)
 
     // Insert empty non-terminals
     if(doent && !nonterm.empty()) {
-      if (isNSEC3) {
-        di.backend->feedEnts3(domain_id, domain, nonterm, ns3pr, isNarrow);
+      if (semantics.isNSEC3) {
+        di.backend->feedEnts3(domain_id, domain, nonterm, semantics.ns3pr, semantics.isNarrow);
       } else
         di.backend->feedEnts(domain_id, nonterm);
     }
