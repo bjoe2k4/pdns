@@ -196,8 +196,8 @@ struct DNSComboWriter {
   ComboAddress d_remote, d_local;
 #ifdef HAVE_PROTOBUF
   boost::uuids::uuid d_uuid;
-  Netmask d_ednssubnet;
 #endif
+  Netmask d_ednssubnet;
   bool d_tcp;
   int d_socket;
   int d_tag{0};
@@ -730,11 +730,9 @@ void startDoResolve(void *p)
     if(!g_quiet || tracedQuery) {
       L<<Logger::Warning<<t_id<<" ["<<MT->getTid()<<"/"<<MT->numProcesses()<<"] " << (dc->d_tcp ? "TCP " : "") << "question for '"<<dc->d_mdp.d_qname<<"|"
        <<DNSRecordContent::NumberToType(dc->d_mdp.d_qtype)<<"' from "<<dc->getRemote();
-#ifdef HAVE_PROTOBUF
       if(!dc->d_ednssubnet.empty()) {
         L<<" (ecs "<<dc->d_ednssubnet.toString()<<")";
       }
-#endif
       L<<endl;
     }
 
@@ -1229,28 +1227,28 @@ void handleRunningTCPQuestion(int fd, FDMultiplexer::funcparam_t& var)
       socklen_t len = dest.getSocklen();
       getsockname(conn->getFD(), (sockaddr*)&dest, &len); // if this fails, we're ok with it
       dc->setLocal(dest);
+      try {
+        DNSName qname;
+        uint16_t qtype;
+        uint16_t qclass;
+        Netmask ednssubnet;
+
+        getQNameAndSubnet(std::string(conn->data, conn->qlen), &qname, &qtype, &qclass, &ednssubnet);
+        dc->d_ednssubnet = ednssubnet;
+
+      }
+      catch(std::exception& e) {
+        if(g_logCommonErrors)
+          L<<Logger::Warning<<"Error parsing a TCP query packet for edns subnet: "<<e.what()<<endl;
+      }
 #ifdef HAVE_PROTOBUF
       auto luaconfsLocal = g_luaconfs.getLocal();
 
       if(luaconfsLocal->protobufServer) {
         dc->d_uuid = (*t_uuidGenerator)();
 
-        try {
-          DNSName qname;
-          uint16_t qtype;
-          uint16_t qclass;
-          Netmask ednssubnet;
-          const struct dnsheader* dh = (const struct dnsheader*) conn->data;
-
-          getQNameAndSubnet(std::string(conn->data, conn->qlen), &qname, &qtype, &qclass, &ednssubnet);
-          dc->d_ednssubnet = ednssubnet;
-
-          protobufLogQuery(luaconfsLocal->protobufServer, luaconfsLocal->protobufMaskV4, luaconfsLocal->protobufMaskV6, dc->d_uuid, dest, conn->d_remote, ednssubnet, true, dh->id, conn->qlen, qname, qtype, qclass, std::string(), std::vector<std::string>());
-        }
-        catch(std::exception& e) {
-          if(g_logCommonErrors)
-            L<<Logger::Warning<<"Error parsing a TCP query packet for edns subnet: "<<e.what()<<endl;
-        }
+        const struct dnsheader* dh = (const struct dnsheader*) conn->data;
+        protobufLogQuery(luaconfsLocal->protobufServer, luaconfsLocal->protobufMaskV4, luaconfsLocal->protobufMaskV6, dc->d_uuid, dest, conn->d_remote, ednssubnet, true, dh->id, conn->qlen, qname, qtype, qclass, std::string(), std::vector<std::string>());
       }
 #endif
       if(dc->d_mdp.d_header.qr) {
@@ -1460,11 +1458,11 @@ string* doProcessUDPQuestion(const std::string& question, const ComboAddress& fr
   dc->setLocal(destaddr);
   dc->d_tcp=false;
   dc->d_policyTags = policyTags;
+  dc->d_ednssubnet = ednssubnet;
 #ifdef HAVE_PROTOBUF
   if (luaconfsLocal->protobufServer) {
     dc->d_uuid = uniqueId;
   }
-  dc->d_ednssubnet = ednssubnet;
 #endif
 
   MT->makeThread(startDoResolve, (void*) dc); // deletes dc
