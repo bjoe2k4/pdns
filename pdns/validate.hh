@@ -5,12 +5,9 @@
 #include <vector>
 #include "namespaces.hh"
 #include "dnsrecords.hh"
- 
-extern bool g_dnssecLOG;
+#include "vstate.hh"
 
-// 4033 5
-enum vState { Indeterminate, Bogus, Insecure, Secure, NTA };
-extern const char *vStates[];
+extern bool g_dnssecLOG;
 
 // NSEC(3) results
 enum dState { NODATA, NXDOMAIN, ENT, INSECURE };

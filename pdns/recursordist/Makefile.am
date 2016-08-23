@@ -130,6 +130,7 @@ pdns_recursor_SOURCES = \
 	unix_utility.cc \
 	utility.hh \
 	validate.cc validate.hh validate-recursor.cc validate-recursor.hh \
+	vstate.hh \
 	version.cc version.hh \
 	webserver.cc webserver.hh \
 	ws-api.cc ws-api.hh \
