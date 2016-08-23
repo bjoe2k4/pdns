@@ -22,12 +22,19 @@
 #ifndef PDNS_DNSRECORDS_HH
 #define PDNS_DNSRECORDS_HH
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include "dnsparser.hh"
 #include "dnswriter.hh"
 #include "rcpgenerator.hh"
 #include <set>
 #include <bitset>
 #include "namespaces.hh"
+#ifdef RECURSOR
+#include "vstate.hh"
+#endif
 
 #define includeboilerplate(RNAME)   RNAME##RecordContent(const DNSRecord& dr, PacketReader& pr); \
   RNAME##RecordContent(const string& zoneData);                                                  \
@@ -284,6 +291,9 @@ public:
   uint8_t d_protocol{0};
   uint8_t d_algorithm{0};
   string d_key;
+#ifdef RECURSOR
+  vState d_vstate{Indeterminate};
+#endif
   bool operator<(const DNSKEYRecordContent& rhs) const
   {
     return tie(d_flags, d_protocol, d_algorithm, d_key) < 
