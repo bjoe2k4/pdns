@@ -7,6 +7,7 @@
 #include "rec-lua-conf.hh"
 #include "base32.hh"
 #include "logger.hh"
+#include "syncres.hh"
 bool g_dnssecLOG{false};
 
 #define LOG(x) if(g_dnssecLOG) { L <<Logger::Warning << x; }
@@ -170,6 +171,40 @@ cspmap_t harvestCSPFromRecs(const vector<DNSRecord>& recs)
 
 vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
 {
+  /* First try to get a validated DNSKEY rrset from the cache */
+  DNSName longestValidatedDNSKEYName(zone);
+  vState longestValidatedDNSKEYState(Indeterminate);
+  do {
+    keyset.clear();
+    auto records = dro.get(longestValidatedDNSKEYName, (uint16_t)QType::DNSKEY);
+    bool found = false;
+    for (auto const& record : records) {
+      if(record.d_name != longestValidatedDNSKEYName)
+        continue;
+
+      if (record.d_type == QType::DNSKEY) {
+        auto recordContent = getRR<DNSKEYRecordContent> (record);
+        if (recordContent->d_vstate != Indeterminate) {
+          if (!found && recordContent->d_vstate == Secure)
+            longestValidatedDNSKEYState = Secure;
+
+          if (recordContent->d_vstate == Insecure)
+            longestValidatedDNSKEYState = Insecure;
+
+          found = true;
+          keyset.insert(*recordContent);
+          break;
+        }
+      }
+    }
+    if (found)
+      break;
+  } while(longestValidatedDNSKEYName.chopOff());
+
+  if (longestValidatedDNSKEYName == zone)
+    // We found validated keys for the exact name we we asked (awesome)
+    return longestValidatedDNSKEYState;
+
   auto luaLocal = g_luaconfs.getLocal();
   auto anchors = luaLocal->dsAnchors;
   // Determine the lowest (i.e. with the most labels) Trust Anchor for zone
@@ -211,6 +246,11 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
   keyset_t validkeys;
 
   DNSName qname = lowestTA;
+
+  if (longestValidatedDNSKEYName.countLabels() > lowestTA.countLabels())
+    // We have a validated keyset below the TA, use that to start.
+    qname = longestValidatedDNSKEYName;
+
   vState state = Secure; // the lowest Trust Anchor is secure
 
   while(zone.isPartOf(qname))
@@ -248,12 +288,14 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
       {
         auto drc=getRR<DNSKEYRecordContent> (rec);
         if(drc) {
-          tkeys.insert(*drc);
-          LOG("Inserting key with tag "<<drc->getTag()<<": "<<drc->getZoneRepresentation()<<endl);
-          //          dotNode("DNSKEY", qname, std::to_string(drc->getTag()), (boost::format("tag=%d, algo=%d") % drc->getTag() % static_cast<int>(drc->d_algorithm)).str());
+          if (drc->d_vstate == Secure) {
+            tkeys.insert(*drc);
+            LOG("Inserting key with tag "<<drc->getTag()<<": "<<drc->getZoneRepresentation()<<endl);
+            //          dotNode("DNSKEY", qname, std::to_string(drc->getTag()), (boost::format("tag=%d, algo=%d") % drc->getTag() % static_cast<int>(drc->d_algorithm)).str());
 
-          toSign.push_back(rec.d_content);
-          toSignTags.push_back(drc->getTag());
+            toSign.push_back(rec.d_content);
+            toSignTags.push_back(drc->getTag());
+          }
         }
       }
     }
@@ -266,35 +308,54 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
 
       for(const auto& drc : r)
       {
-	bool isValid = false;
-	DSRecordContent dsrc2;
-	try {
-	  dsrc2=makeDSFromDNSKey(qname, drc, dsrc.d_digesttype);
-	  isValid = dsrc == dsrc2;
-	} 
-	catch(std::exception &e) {
-	  LOG("Unable to make DS from DNSKey: "<<e.what()<<endl);
-	}
+        if (drc.d_vstate == Indeterminate) {
+          bool isValid = false;
+          DSRecordContent dsrc2;
+          try {
+            dsrc2=makeDSFromDNSKey(qname, drc, dsrc.d_digesttype);
+            isValid = dsrc == dsrc2;
+          }
+          catch(std::exception &e) {
+            // Most likely an unsupported algo
+            auto replacingDrc(drc);
+            replacingDrc.d_vstate = Insecure;
+            replacingRecs[recs.at(drc)] = replacingDrc;
 
-        if(isValid) {
-	  LOG("got valid DNSKEY (it matches the DS) with tag "<<dsrc.d_tag<<" for "<<qname<<endl);
-	  
+            struct timeval tv;
+            gettimeofday(&tv, 0);
+
+            t_RC->replace(tv, drc.d_name, QType(QType::DNSKEY), replacingDrc, 
+              LOG("Unable to make DS from DNSKey: "<<e.what()<<endl);
+          }
+
+          if(isValid) {
+            LOG("got valid DNSKEY (it matches the DS) with tag "<<dsrc.d_tag<<" for "<<qname<<endl);
+
+            validkeys.insert(drc);
+            dotNode("DS", qname, "" /*std::to_string(dsrc.d_tag)*/, (boost::format("tag=%d, digest algo=%d, algo=%d") % dsrc.d_tag % static_cast<int>(dsrc.d_digesttype) % static_cast<int>(dsrc.d_algorithm)).str());
+          }
+          else {
+            LOG("DNSKEY did not match the DS, parent DS: "<<drc.getZoneRepresentation() << " ! = "<<dsrc2.getZoneRepresentation()<<endl);
+          }
+          // cout<<"    subgraph "<<dotEscape("cluster "+qname)<<" { "<<dotEscape("DS "+qname)<<" -> "<<dotEscape("DNSKEY "+qname)<<" [ label = \""<<dsrc.d_tag<<"/"<<static_cast<int>(dsrc.d_digesttype)<<"\" ]; label = \"zone: "<<qname<<"\"; }"<<endl;
+          dotEdge(DNSName("."), "DS", qname, "" /*std::to_string(dsrc.d_tag)*/, "DNSKEY", qname, std::to_string(drc.getTag()), isValid ? "green" : "red");
+          // dotNode("DNSKEY", qname, (boost::format("tag=%d, algo=%d") % drc.getTag() % static_cast<int>(drc.d_algorithm)).str());
+        } else if (drc.d_vstate == Secure) {
+          LOG("got valid DNSKEY (state in cache is Secure) with tag "<<dsrc.d_tag<<" for "<<qname<<endl);
           validkeys.insert(drc);
-	  dotNode("DS", qname, "" /*std::to_string(dsrc.d_tag)*/, (boost::format("tag=%d, digest algo=%d, algo=%d") % dsrc.d_tag % static_cast<int>(dsrc.d_digesttype) % static_cast<int>(dsrc.d_algorithm)).str());
+        } else if (drc.d_vstate == Insecure) {
+          LOG("got insecure DNSKEY with tag "<<dsrc.d_tag<<" for "<<qname<<endl);
+          insecurekeys.insert(drc);
+        } else if (drc.d_vstate == Bogus) {
+          LOG("got bogus DNSKEY with tag "<<dsrc.d_tag<<" for "<<qname<<endl);
         }
-	else {
-	  LOG("DNSKEY did not match the DS, parent DS: "<<drc.getZoneRepresentation() << " ! = "<<dsrc2.getZoneRepresentation()<<endl);
-	}
-        // cout<<"    subgraph "<<dotEscape("cluster "+qname)<<" { "<<dotEscape("DS "+qname)<<" -> "<<dotEscape("DNSKEY "+qname)<<" [ label = \""<<dsrc.d_tag<<"/"<<static_cast<int>(dsrc.d_digesttype)<<"\" ]; label = \"zone: "<<qname<<"\"; }"<<endl;
-	dotEdge(DNSName("."), "DS", qname, "" /*std::to_string(dsrc.d_tag)*/, "DNSKEY", qname, std::to_string(drc.getTag()), isValid ? "green" : "red");
-        // dotNode("DNSKEY", qname, (boost::format("tag=%d, algo=%d") % drc.getTag() % static_cast<int>(drc.d_algorithm)).str());
       }
     }
 
     //    cerr<<"got "<<validkeys.size()<<"/"<<tkeys.size()<<" valid/tentative keys"<<endl;
     // these counts could be off if we somehow ended up with 
     // duplicate keys. Should switch to a type that prevents that.
-    if(validkeys.size() < tkeys.size())
+    if(validkeys.size() + insecurekeys.size() < tkeys.size())
     {
       // this should mean that we have one or more DS-validated DNSKEYs
       // but not a fully validated DNSKEY set, yet
