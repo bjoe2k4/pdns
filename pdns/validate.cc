@@ -7,6 +7,7 @@
 #include "rec-lua-conf.hh"
 #include "base32.hh"
 #include "logger.hh"
+#include "syncres.hh"
 bool g_dnssecLOG{false};
 
 #define LOG(x) if(g_dnssecLOG) { L <<Logger::Warning << x; }
@@ -235,6 +236,31 @@ cspmap_t harvestCSPFromRecs(const vector<DNSRecord>& recs)
   return cspmap;
 }
 
+inline vState saveDNSKEYValidationToCache(const vState& validationResult, const cspmap_t& dnskeyRecords)
+{
+  for (const auto& dnskeyRecord : dnskeyRecords) {
+    if (dnskeyRecord.first.second != QType::DNSKEY)
+      continue;
+    vector<DNSRecord> replacingRecords;
+    for (const auto& record : dnskeyRecord.second.records) {
+      DNSRecord replacingRecord = DNSRecord();
+      replacingRecord.d_name = dnskeyRecord.first.first;
+      replacingRecord.d_type = (uint16_t) QType::DNSKEY;
+      replacingRecord.d_ttl = 3600; //XXX TODO FIXME
+
+      auto dnskey = std::dynamic_pointer_cast<DNSKEYRecordContent>(record);
+
+      if (dnskey) {
+        dnskey->d_vstate = validationResult;
+        replacingRecord.d_content = dnskey;
+        replacingRecords.push_back(replacingRecord);
+      }
+    }
+    t_RC->replace(g_now.tv_sec, dnskeyRecord.first.first, QType(QType::DNSKEY), replacingRecords, dnskeyRecord.second.signatures, true);
+  }
+  return validationResult;
+}
+
 vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
 {
   auto luaLocal = g_luaconfs.getLocal();
@@ -333,13 +359,37 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
       cspmap_t validatedDS;
       dsmap_t validDS;
 
-      tentativeDS = harvestCSPFromRecs(dro.get(qname, QType::DS));
       tentativeDNSKEY = harvestCSPFromRecs(dro.get(qname, QType::DNSKEY));
 
-      bool hadUnknownAlgoOrError = validateWithKeySet(tentativeDS, validatedDS, validkeys);
-      LOG("got "<<tentativeDS.count(searchPair)<<" records for DS query of which "<<validatedDS.count(searchPair)<<" valid "<<endl);
+      bool hadUnknownAlgoOrError;
+      std::pair<std::_Rb_tree_iterator<std::pair<const std::pair<DNSName, short unsigned int>, ContentSigPair> >, std::_Rb_tree_iterator<std::pair<const std::pair<DNSName, short unsigned int>, ContentSigPair> > > r; //used to be auto, but then skipLevel happened
 
-      auto r = validatedDS.equal_range(make_pair(qname, QType::DS));
+      for (const auto& rec : tentativeDNSKEY[make_pair(qname,QType::DNSKEY)].records) {
+        auto dnskey = std::dynamic_pointer_cast<DNSKEYRecordContent>(rec);
+        switch(dnskey->d_vstate) {
+          case Secure:
+            LOG("Found validated DNSKEY in cache for "<<qname<<", going to next level"<<endl);
+            goto skipLevel;
+          case Insecure:
+          case Bogus:
+            LOG("Found "<<vStates[dnskey->d_vstate]<<" DNSKEY in cache for "<<qname<<", returning"<<endl);
+            return dnskey->d_vstate; // Return the key state if it is Insecure or Bogus
+          case NTA: // Can never happen
+          case Indeterminate:
+            LOG("Found "<<vStates[dnskey->d_vstate]<<" DNSKEY in cache for "<<qname<<", will validate"<<endl);
+            break;
+        }
+        // We save the full set with the vState, so only the first has to be checked
+        break;
+      }
+
+      /* When we are here, the state of the DNSKEY RRset is Indeterminate. This
+       * means we actually have to validate it. */
+      tentativeDS = harvestCSPFromRecs(dro.get(qname, QType::DS));
+      LOG("got "<<tentativeDS.count(searchPair)<<" records for DS query of which "<<validatedDS.count(searchPair)<<" valid "<<endl);
+      hadUnknownAlgoOrError = validateWithKeySet(tentativeDS, validatedDS, validkeys);
+      r = validatedDS.equal_range(make_pair(qname, QType::DS));
+
       if(r.first == r.second) {
         if (hadUnknownAlgoOrError) {
           /* There was an internal error validating the DS records, possibly
@@ -354,7 +404,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
            * described above.
            */
           LOG("Unable to validate one or more DS records, possibly because of unsupported algorithms"<<endl);
-          return Insecure;
+          return saveDNSKEYValidationToCache(Insecure, tentativeDNSKEY);
         }
 
         LOG("No DS for "<<qname<<", now look for a secure denial"<<endl);
@@ -371,7 +421,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
               if(nsec) {
                 if(v.first.first == qname && !nsec->d_set.count(QType::DS)) {
                   LOG("Denies existence of DS!"<<endl);
-                  return Insecure;
+                  return saveDNSKEYValidationToCache(Insecure, tentativeDNSKEY);
                 }
                 else if(v.first.first.canonCompare(qname) && qname.canonCompare(nsec->d_next) ) {
                   LOG("Did not find DS for this level, trying one lower"<<endl);
@@ -399,11 +449,11 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
                   beginHash == nsec3->d_nexthash)  // "we have only 1 NSEC3 record, LOL!"  
               {
                 LOG("Denies existence of DS!"<<endl);
-                return Insecure;
+                return saveDNSKEYValidationToCache(Insecure, tentativeDNSKEY);
               }
               else if(beginHash == h && !nsec3->d_set.count(QType::DS)) {
                 LOG("Denies existence of DS (not opt-out)"<<endl);
-                return Insecure;
+                return saveDNSKEYValidationToCache(Insecure, tentativeDNSKEY);
               }
               else {
                 LOG("Did not cover us, start="<<v.first.first<<", us="<<toBase32Hex(h)<<", end="<<toBase32Hex(nsec3->d_nexthash)<<endl);
@@ -414,7 +464,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
         /* We did not `goto skipLevel` _or_ return a state. This means that there
          * is no secure denial
          */
-        return Bogus;
+        return saveDNSKEYValidationToCache(Bogus, tentativeDNSKEY);
       }
 
       /* We now have a validated DS RRset. Get the matching DNSKEY RRsets and
@@ -435,14 +485,14 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
       if(validkeys.empty())
       {
         LOG("ended up with zero valid DNSKEYs, going Bogus"<<endl);
-        return Bogus;
+        return saveDNSKEYValidationToCache(Bogus, tentativeDNSKEY);
       }
 
       LOG("situation: we have one or more valid DNSKEYs for ["<<qname<<"] (want ["<<zone<<"])"<<endl);
       if(qname == zone) {
         LOG("requested keyset found! returning Secure for the keyset"<<endl);
         keyset.insert(validkeys.begin(), validkeys.end());
-        return Secure;
+        return saveDNSKEYValidationToCache(Secure, tentativeDNSKEY);
       }
     skipLevel:;
     } while (qname != zone);
