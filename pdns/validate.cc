@@ -40,10 +40,10 @@ vector<DNSKEYRecordContent> getByTag(const vector<shared_ptr<DNSRecordContent>>&
   return ret;
 }
 
-keyset_t getValidatedKeys (const cspmap_t& toValidate, const keyset_t& validkeys) {
+keyset_t getValidatedKeys (const cspmap_t& toValidate, const keyset_t& validkeys, bool& hadError) {
   keyset_t ret;
   cspmap_t validatedKeys;
-  validateWithKeySet(toValidate, validatedKeys, validkeys);
+  hadError = validateWithKeySet(toValidate, validatedKeys, validkeys);
   if (validatedKeys.begin()->second.records.size() == toValidate.begin()->second.records.size()) {
     LOG("validation succeeded - whole DNSKEY set is valid"<<endl);
     ret.clear();
@@ -314,6 +314,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
       dsmap = *tmp;
 
     validkeys.clear();
+    bool hadUnknownAlgoOrError;
 
     // start of this iteration
     // we can trust that dsmap has valid DS records for qname
@@ -331,7 +332,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
        * one of these valid DNSKEYs should be able to validate the
        * whole set.
        */
-      validkeys = getValidatedKeys(recs, validkeys);
+      validkeys = getValidatedKeys(recs, validkeys, hadUnknownAlgoOrError);
 
     if(validkeys.empty())
     {
@@ -361,12 +362,13 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
       cspmap_t validatedDS;
       dsmap_t validDS;
 
+      // Get the DNSKEY for qname
       tentativeDNSKEY = harvestCSPFromRecs(dro.get(qname, QType::DNSKEY));
 
-      bool hadUnknownAlgoOrError;
       std::pair<std::_Rb_tree_iterator<std::pair<const std::pair<DNSName, short unsigned int>, ContentSigPair> >, std::_Rb_tree_iterator<std::pair<const std::pair<DNSName, short unsigned int>, ContentSigPair> > > r; //used to be auto, but then skipLevel happened
 
 #ifdef RECURSOR
+      // Check if the DNSKEY is already validated
       for (const auto& rec : tentativeDNSKEY[make_pair(qname,QType::DNSKEY)].records) {
         auto dnskey = std::dynamic_pointer_cast<DNSKEYRecordContent>(rec);
         switch(dnskey->d_vstate) {
@@ -389,13 +391,15 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
 
       /* When we are here, the state of the DNSKEY RRset is Indeterminate. This
        * means we actually have to validate it. */
-      tentativeDS = harvestCSPFromRecs(dro.get(qname, QType::DS));
-      LOG("got "<<tentativeDS.count(searchPair)<<" records for DS query of which "<<validatedDS.count(searchPair)<<" valid "<<endl);
-      hadUnknownAlgoOrError = validateWithKeySet(tentativeDS, validatedDS, validkeys);
-      r = validatedDS.equal_range(make_pair(qname, QType::DS));
 
-      if(r.first == r.second) {
-        if (hadUnknownAlgoOrError) {
+      // retrieve the DS records and RRSIGs for qname
+      tentativeDS = harvestCSPFromRecs(dro.get(qname, QType::DS));
+      // Use the validkeys from the previous iteration (i.e. the 'parent') to validate the tentative DS records
+      hadUnknownAlgoOrError = validateWithKeySet(tentativeDS, validatedDS, validkeys);
+      LOG("got "<<tentativeDS.count(searchPair)<<" records for DS query of which "<<validatedDS.count(searchPair)<<" valid "<<endl);
+
+      if(validatedDS.count(searchPair) == 0) { // No validated DS Records
+        if (tentativeDS.count(searchPair) > validatedDS.count(searchPair) && hadUnknownAlgoOrError) {
           /* There was an internal error validating the DS records, possibly
            * because the algorithm is unsupported. And we have zero DS records.
            *
@@ -482,12 +486,18 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
         }
       }
 
+      // Now that we know the delegation is Secure, test if the DNSKEY RRset is also good.
       validkeys = getValidKeys(validDS, tentativeDNSKEY, qname);
+
       if(validkeys.size() < tentativeDNSKEY.begin()->second.records.size())
-        validkeys = getValidatedKeys(tentativeDNSKEY, validkeys);
+        validkeys = getValidatedKeys(tentativeDNSKEY, validkeys, hadUnknownAlgoOrError);
 
       if(validkeys.empty())
       {
+        if (hadUnknownAlgoOrError) {
+          LOG("ended up with zero valid DNSKEYs, but could not validate them because of unsupported algorithm(s), going Insecure"<<endl);
+          return saveDNSKEYValidationToCache(Insecure, tentativeDNSKEY);
+        }
         LOG("ended up with zero valid DNSKEYs, going Bogus"<<endl);
         return saveDNSKEYValidationToCache(Bogus, tentativeDNSKEY);
       }
