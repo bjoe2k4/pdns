@@ -238,6 +238,7 @@ cspmap_t harvestCSPFromRecs(const vector<DNSRecord>& recs)
 
 inline vState saveDNSKEYValidationToCache(const vState& validationResult, const cspmap_t& dnskeyRecords)
 {
+#ifdef RECURSOR
   for (const auto& dnskeyRecord : dnskeyRecords) {
     if (dnskeyRecord.first.second != QType::DNSKEY)
       continue;
@@ -258,6 +259,7 @@ inline vState saveDNSKEYValidationToCache(const vState& validationResult, const 
     }
     t_RC->replace(g_now.tv_sec, dnskeyRecord.first.first, QType(QType::DNSKEY), replacingRecords, dnskeyRecord.second.signatures, true);
   }
+#endif
   return validationResult;
 }
 
@@ -364,6 +366,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
       bool hadUnknownAlgoOrError;
       std::pair<std::_Rb_tree_iterator<std::pair<const std::pair<DNSName, short unsigned int>, ContentSigPair> >, std::_Rb_tree_iterator<std::pair<const std::pair<DNSName, short unsigned int>, ContentSigPair> > > r; //used to be auto, but then skipLevel happened
 
+#ifdef RECURSOR
       for (const auto& rec : tentativeDNSKEY[make_pair(qname,QType::DNSKEY)].records) {
         auto dnskey = std::dynamic_pointer_cast<DNSKEYRecordContent>(rec);
         switch(dnskey->d_vstate) {
@@ -382,6 +385,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
         // We save the full set with the vState, so only the first has to be checked
         break;
       }
+#endif
 
       /* When we are here, the state of the DNSKEY RRset is Indeterminate. This
        * means we actually have to validate it. */
