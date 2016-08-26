@@ -141,13 +141,13 @@ void MemRecursorCache::replace(time_t now, const DNSName &qname, const QType& qt
   ce.d_qtype=qt.getCode();
   ce.d_signatures=signatures;
   
-  //  cerr<<"asked to store "<< (qname.empty() ? "EMPTY" : qname.toString()) <<"|"+qt.getName()<<" -> '";
-  //  cerr<<(content.empty() ? string("EMPTY CONTENT")  : content.begin()->d_content->getZoneRepresentation())<<"', auth="<<auth<<", ce.auth="<<ce.d_auth;
-  //   cerr<<", ednsmask: "  <<  (ednsmask ? ednsmask->toString() : "none") <<endl;
+  cerr<<"asked to store "<< (qname.empty() ? "EMPTY" : qname.toString()) <<"|"+qt.getName()<<" -> '";
+  cerr<<(content.empty() ? string("EMPTY CONTENT")  : content.begin()->d_content->getZoneRepresentation())<<"', auth="<<auth<<", ce.auth="<<ce.d_auth;
+  cerr<<", ednsmask: "  <<  (ednsmask ? ednsmask->toString() : "none") <<endl;
 
   if(!auth && ce.d_auth) {  // unauth data came in, we have some auth data, but is it fresh?
     if(ce.d_ttd > now) { // we still have valid data, ignore unauth data
-      //      cerr<<"\tStill hold valid auth data, and the new data is unauth, return\n";
+            cerr<<"\tStill hold valid auth data, and the new data is unauth, return\n";
       return;
     }
     else {
@@ -158,23 +158,23 @@ void MemRecursorCache::replace(time_t now, const DNSName &qname, const QType& qt
 
   // limit TTL of auth->auth NSset update if needed, except for root 
   if(ce.d_auth && auth && qt.getCode()==QType::NS && !isNew && !qname.isRoot()) {
-    //    cerr<<"\tLimiting TTL of auth->auth NS set replace to "<<ce.d_ttd<<endl;
+        cerr<<"\tLimiting TTL of auth->auth NS set replace to "<<ce.d_ttd<<endl;
     maxTTD = ce.d_ttd;
   }
 
   // make sure that we CAN refresh the root
   if(auth && (qname.isRoot() || !attemptToRefreshNSTTL(qt, content, ce) ) ) {
-    // cerr<<"\tGot auth data, and it was not refresh attempt of an unchanged NS set, nuking storage"<<endl;
+     cerr<<"\tGot auth data, and it was not refresh attempt of an unchanged NS set, nuking storage"<<endl;
     ce.d_records.clear(); // clear non-auth data
     ce.d_auth = true;
   }
-//  else cerr<<"\tNot nuking"<<endl;
+  else cerr<<"\tNot nuking"<<endl;
 
 
   for(auto i=content.cbegin(); i != content.cend(); ++i) {
 
     ce.d_ttd=min(maxTTD, i->d_ttl);   // XXX this does weird things if TTLs differ in the set
-    //    cerr<<"To store: "<<i->d_content->getZoneRepresentation()<<" with ttl/ttd "<<i->d_ttl<<", capped at: "<<maxTTD<<endl;
+        cerr<<"To store: "<<i->d_content->getZoneRepresentation()<<" with ttl/ttd "<<i->d_ttl<<", capped at: "<<maxTTD<<endl;
     ce.d_records.push_back(i->d_content);
     // there was code here that did things with TTL and auth. Unsure if it was good. XXX
   }
