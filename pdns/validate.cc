@@ -11,10 +11,13 @@
 bool g_dnssecLOG{false};
 
 #define LOG(x) if(g_dnssecLOG) { L <<Logger::Warning << x; }
-void dotEdge(DNSName zone, string type1, DNSName name1, string tag1, string type2, DNSName name2, string tag2, string color="");
-void dotNode(string type, DNSName name, string tag, string content);
+void dotEdge(const DNSName& zone, const string& type1, const DNSName& name1, const string& tag1, const string& type2, const DNSName& name2, const string& tag2, const string& color="");
+void dotNode(const string& type, const DNSName& name, const string& tag, const string& content);
 string dotName(string type, DNSName name, string tag);
 string dotEscape(string name);
+
+auto t_graphvizBuf = new boost::circular_buffer<string>();
+t_graphvizBuf.set_capacity(25);
 
 const char *dStates[]={"nodata", "nxdomain", "empty non-terminal", "insecure (no-DS proof)"};
 const char *vStates[]={"Indeterminate", "Bogus", "Insecure", "Secure", "NTA"};
@@ -259,6 +262,8 @@ inline vState saveDNSKEYValidationToCache(const vState& validationResult, const 
     }
     t_RC->replace(g_now.tv_sec, dnskeyRecord.first.first, QType(QType::DNSKEY), replacingRecords, dnskeyRecord.second.signatures, true);
   }
+  t_graphvizBuf.push_back(*graphvizHolder);
+//  cout << *graphvizHolder;
 #endif
   return validationResult;
 }
@@ -528,27 +533,24 @@ string dotName(string type, DNSName name, string tag)
   else
     return type+" "+name.toString()+"/"+tag;
 }
-void dotNode(string type, DNSName name, string tag, string content)
+
+void dotNode(const string& type, const DNSName& name, const string& tag, const string& content)
 {
-#ifdef GRAPHVIZ
-  cout<<"    "
-      <<dotEscape(dotName(type, name, tag))
-      <<" [ label="<<dotEscape(dotName(type, name, tag)+"\\n"+content)<<" ];"<<endl;
-#endif
+  *graphvizHolder+"    "
+      +dotEscape(dotName(type, name, tag))
+      +" [ label="+dotEscape(dotName(type, name, tag)+"\\n"+content)+" ];\n";
 }
 
-void dotEdge(DNSName zone, string type1, DNSName name1, string tag1, string type2, DNSName name2, string tag2, string color)
+void dotEdge(const DNSName& zone, const string& type1, const DNSName& name1, const string& tag1, const string& type2, const DNSName& name2, const string& tag2, const string& color)
 {
-#ifdef GRAPHVIZ
-  cout<<"    ";
-  if(zone != DNSName(".")) cout<<"subgraph "<<dotEscape("cluster "+zone.toString())<<" { ";
-  cout<<dotEscape(dotName(type1, name1, tag1))
-      <<" -> "
-      <<dotEscape(dotName(type2, name2, tag2));
-  if(color != "") cout<<" [ color=\""<<color<<"\" ]; ";
-  else cout<<"; ";
-  if(zone != DNSName(".")) cout<<"label = "<<dotEscape("zone: "+zone.toString())<<";"<<"}";
-  cout<<endl;
-#endif
+  *graphvizHolder+"    ";
+  if(zone != DNSName(".")) *graphvizHolder+"subgraph "+dotEscape("cluster "+zone.toString())+" { ";
+  *graphvizHolder+dotEscape(dotName(type1, name1, tag1))
+      +" -> "
+      +dotEscape(dotName(type2, name2, tag2));
+  if(color != "") *graphvizHolder+" [ color=\""+color+"\" ]; ";
+  else *graphvizHolder+"; ";
+  if(zone != DNSName(".")) *graphvizHolder+"label = "+dotEscape("zone: "+zone.toString())+";"+"}";
+  *graphvizHolder+"\n";
 }
 
