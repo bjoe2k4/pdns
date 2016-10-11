@@ -2791,7 +2791,7 @@ try
   t_allowFrom = g_initialAllowFrom;
   t_udpclientsocks = new UDPClientSocks();
   t_tcpClientCounts = new tcpClientCounts_t();
-  primeHints();
+  primeHints(g_dnssecmode!=DNSSECMode::Off);
 
   t_packetCache = new RecursorPacketCache();
 

@@ -49,7 +49,7 @@
 
 #include "filterpo.hh"
 
-void primeHints(void);
+void primeHints(const bool& doDNSSEC=true);
 class RecursorLua4;
 
 struct BothRecordsAndSignatures

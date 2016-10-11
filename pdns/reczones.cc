@@ -37,7 +37,7 @@
 extern int g_argc;
 extern char** g_argv;
 
-void primeHints(void)
+void primeHints(const bool& doDNSSEC)
 {
   // prime root cache
   vector<DNSRecord> nsset;
@@ -95,6 +95,11 @@ void primeHints(void)
     }
   }
   t_RC->replace(time(0), g_rootdnsname, QType(QType::NS), nsset, vector<std::shared_ptr<RRSIGRecordContent>>(), true); // and stuff in the cache (auth)
+  SyncRes sr(g_now);
+//  sr.setNoCache();
+  sr.d_doDNSSEC = doDNSSEC;
+  vector<DNSRecord> ret;
+  sr.beginResolve(g_rootdnsname, QType(QType::NS), 1, ret);
 }
 
 static void makeNameToIPZone(SyncRes::domainmap_t* newMap, const DNSName& hostname, const string& ip)
