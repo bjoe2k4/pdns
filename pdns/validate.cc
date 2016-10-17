@@ -493,6 +493,7 @@ vState DNSSECValidator::validateRecords(const vector<DNSRecord>& records)
   set<DNSKEYRecordContent> keys;
   cspmap_t validrrsets;
 
+  // Get all keys for all the signer names in the signatures
   for(const auto& csp : cspmap) {
     for(const auto& sig : csp.second.signatures) {
       vState newState = getKeysFor(sig->d_signer, keys);
@@ -509,6 +510,21 @@ vState DNSSECValidator::validateRecords(const vector<DNSRecord>& records)
       }
     }
   }
+
+  if (keys.empty()) {
+    // There were NO signatures on the records.
+    for(const auto& csp : cspmap) {
+      // Try to the get the key for the actual QNAME
+      vState newState = getKeysFor(csp.first.first, keys);
+
+      if (newState == Bogus)
+        return Bogus;
+
+      if (newState > state)
+        state = newState;
+    }
+  }
+
   LOG("Took "<<recordOracle->d_queries<<" queries"<<endl);
 
   // Was the state of the key anything else but Secure?
