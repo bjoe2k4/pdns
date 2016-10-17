@@ -120,6 +120,10 @@ insecure.sub2.secure.example. 3600 IN NS ns1.insecure.example.
 *.cnamewildcardnxdomain.secure.example. 3600 IN CNAME doesntexist.secure.example.
 
 cname-to-formerr.secure.example. 3600 IN CNAME host1.insecure-formerr.example.
+
+bogus-no-dnskey.no-zonecut-here.secure.example. 3600 IN NS   ns1.bogus-no-dnskey.no-zonecut-here.secure.example.
+bogus-no-dnskey.no-zonecut-here.secure.example. 3600 IN DS   5534 13 1 12345678a8d8605c398e4eba763f97b9a5a31787
+ns1.bogus-no-dnskey.no-zonecut-here.secure.example. 3600 IN A {prefix}.14
         """,
         'bogus.example': """
 bogus.example.           3600 IN SOA  {soa}
@@ -127,6 +131,12 @@ bogus.example.           3600 IN NS   ns1.bogus.example.
 ns1.bogus.example.       3600 IN A    {prefix}.12
 ted.bogus.example.       3600 IN A    192.0.2.1
 bill.bogus.example.      3600 IN AAAA 2001:db8:12::3
+        """,
+        'bogus-no-dnskey.no-zonecut-here.secure.example': """
+bogus-no-dnskey.no-zonecut-here.secure.example.       3600 IN SOA {soa}
+bogus-no-dnskey.no-zonecut-here.secure.example.       3600 IN NS  ns1.bogus-no-dnskey.no-zonecut-here.secure.example.
+ns1.bogus-no-dnskey.no-zonecut-here.secure.example.   3600 IN A   {prefix}.14
+host1.bogus-no-dnskey.no-zonecut-here.secure.example. 3600 IN A   192.0.2.23
         """,
         'insecure.sub2.secure.example': """
 insecure.sub2.secure.example.        3600 IN SOA  {soa}
@@ -234,7 +244,7 @@ PrivateKey: o9F5iix8V68tnMcuOaM2Lt8XXhIIY//SgHIHEePk6cM=
         '11': ['example'],
         '12': ['bogus.example'],
         '13': ['insecure.example', 'insecure.sub2.secure.example'],
-        '14': ['optout.example'],
+        '14': ['bogus-no-dnskey.no-zonecut-here.secure.example', 'optout.example'],
         '15': ['insecure.optout.example', 'secure.optout.example']
     }
 

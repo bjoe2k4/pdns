@@ -154,3 +154,7 @@ class BasicDNSSEC(RecursorTest):
         self.assertRRsetInAnswer(res, expectedA)
         self.assertMatchingRRSIGInAnswer(res, expectedCNAME)
 
+    def testBogusAnswerWithoutSignatures(self):
+        """ #4574, Don't go insecure if the zonecut jumps a label and the child zone has a DS record but is unsigned (so bogus)"""
+        res = self.sendQuery('host1.bogus-no-dnskey.no-zonecut-here.secure.example.', 'A')
+        self.assertRcodeEqual(res, dns.rcode.SERVFAIL)
