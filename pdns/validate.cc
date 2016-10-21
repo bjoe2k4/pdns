@@ -30,7 +30,6 @@ vector<DNSKEYRecordContent> DNSSECValidator::getByTag(const keyset_t& keys, uint
   return ret;
 }
 
-// FIXME: needs a zone argument, to avoid things like 6840 4.1
 // FIXME: Add ENT support
 // FIXME: Make usable for non-DS records and hook up to validateRecords (or another place)
 dState DNSSECValidator::getDenial(const cspmap_t &validrrsets, const DNSName& qname, const uint16_t& qtype)
@@ -38,12 +37,48 @@ dState DNSSECValidator::getDenial(const cspmap_t &validrrsets, const DNSName& qn
   for(const auto& v : validrrsets) {
     LOG("Do have: "<<v.first.first<<"/"<<DNSRecordContent::NumberToType(v.first.second)<<endl);
 
+    DNSName signer;
+    for (const auto& r : v.second.signatures) {
+      auto rrsig = std::dynamic_pointer_cast<RRSIGRecordContent>(r);
+      if (!rrsig)
+        continue;
+      if (!signer.empty() && signer != rrsig->d_signer) {
+        LOG("NSEC or NSEC3 RRSIGs for "<<qname<<"|"<<DNSRecordContent::NumberToType(qtype)<<" don't have matching signer names");
+        return INSECURE;
+      }
+      signer = rrsig->d_signer;
+    }
+
+    // Don't process denials when the record is not part of the signer's tree
+    if(!v.first.first.isPartOf(signer))
+      continue;
+
     if(v.first.second==QType::NSEC) {
       for(const auto& r : v.second.records) {
         LOG("\t"<<r->getZoneRepresentation()<<endl);
         auto nsec = std::dynamic_pointer_cast<NSECRecordContent>(r);
         if(!nsec)
           continue;
+
+        /*
+         * RFC 6840 section 4.1:
+         *   An "ancestor delegation" NSEC RR (or NSEC3 RR) is one with:
+         *    o  the NS bit set,
+         *    o  the Start of Authority (SOA) bit clear, and
+         *    o  a signer field that is shorter than the owner name of the NSEC RR,
+         *       or the original owner name for the NSEC3 RR.
+         *   Ancestor delegation NSEC or NSEC3 RRs MUST NOT be used to assume
+         *   nonexistence of any RRs below that zone cut, which include all RRs at
+         *   that (original) owner name other than DS RRs, and all RRs below that
+         *   owner name regardless of type.
+         */
+        if(nsec->d_set.count(QType::NS) &&
+           !nsec->d_set.count(QType::SOA) &&
+           signer.countLabels() < qname.countLabels() &&
+           qtype != QType::DS) {
+          LOG("The zone at " << signer << " tried to deny records below the zone-cut for " << qname << endl);
+          continue;
+        }
 
         /* check if the type is denied */
         if(qname == v.first.first && !nsec->d_set.count(qtype)) {
@@ -70,6 +105,27 @@ dState DNSSECValidator::getDenial(const cspmap_t &validrrsets, const DNSName& qn
         //              cerr<<"Salt length: "<<nsec3->d_salt.length()<<", iterations: "<<nsec3->d_iterations<<", hashed: "<<*(zoneCutIter+1)<<endl;
         LOG("\tquery hash: "<<toBase32Hex(h)<<endl);
         string beginHash=fromBase32Hex(v.first.first.getRawLabels()[0]);
+
+        /*
+         * RFC 6840 section 4.1:
+         *   An "ancestor delegation" NSEC RR (or NSEC3 RR) is one with:
+         *    o  the NS bit set,
+         *    o  the Start of Authority (SOA) bit clear, and
+         *    o  a signer field that is shorter than the owner name of the NSEC RR,
+         *       or the original owner name for the NSEC3 RR.
+         *   Ancestor delegation NSEC or NSEC3 RRs MUST NOT be used to assume
+         *   nonexistence of any RRs below that zone cut, which include all RRs at
+         *   that (original) owner name other than DS RRs, and all RRs below that
+         *   owner name regardless of type.
+         */
+        if(nsec3->d_set.count(QType::NS) &&
+           !nsec3->d_set.count(QType::SOA) &&
+           signer.countLabels() < qname.countLabels() &&
+           qtype != QType::DS &&
+           beginHash == h) {
+          LOG("The zone at " << signer << " tried to deny records below the zone-cut for " << qname << endl);
+          continue;
+        }
 
         // If the name exists, check if the qtype is denied
         if(beginHash == h && !nsec3->d_set.count(qtype)) {
