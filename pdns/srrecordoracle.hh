@@ -20,26 +20,26 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 #pragma once
-#include "sholder.hh"
-#include "sortlist.hh"
-#include "filterpo.hh"
-#include "remote_logger.hh"
-#include "validate.hh"
+#include "dnsrecordoracle.hh"
+#include "syncres.hh"
 
-class LuaConfigItems 
+class SRRecordOracle : public DNSRecordOracle
 {
 public:
-  LuaConfigItems();
-  SortList sortlist;
-  DNSFilterEngine dfe;
-  map<DNSName,DNSSECValidator::dsmap_t> dsAnchors;
-  map<DNSName,std::string> negAnchors;
-  std::shared_ptr<RemoteLogger> protobufServer{nullptr};
-  uint8_t protobufMaskV4{32};
-  uint8_t protobufMaskV6{128};
-  bool protobufTaggedOnly{false};
+  vector<DNSRecord> get(const DNSName& qname, uint16_t qtype) override
+  {
+    struct timeval tv;
+    gettimeofday(&tv, 0);
+    SyncRes sr(tv);
+    sr.setId(MT->getTid());
+    vector<DNSRecord> ret;
+    sr.d_doDNSSEC=true;
+    if (qtype == QType::DS || qtype == QType::DNSKEY || qtype == QType::NS)
+      sr.setSkipCNAMECheck(true);
+    sr.beginResolve(qname, QType(qtype), 1, ret);
+    d_queries += sr.d_outqueries;
+    return ret;
+  }
+  int d_queries{0};
 };
-
-extern GlobalStateHolder<LuaConfigItems> g_luaconfs;
-void loadRecursorLuaConfig(const std::string& fname, bool checkOnly);
 

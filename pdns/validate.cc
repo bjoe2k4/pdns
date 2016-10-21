@@ -4,19 +4,24 @@
 #include "rec-lua-conf.hh"
 #include "base32.hh"
 #include "logger.hh"
+#include "vstate.hh"
+#include "dnsrecordoracle.hh"
+#include "srrecordoracle.hh"
+
 bool g_dnssecLOG{false};
 
-#define LOG(x) if(g_dnssecLOG) { L <<Logger::Warning << x; }
-void dotEdge(DNSName zone, string type1, DNSName name1, string tag1, string type2, DNSName name2, string tag2, string color="");
-void dotNode(string type, DNSName name, string tag, string content);
-string dotName(string type, DNSName name, string tag);
-string dotEscape(string name);
-
+#define LOG(x) if(trace || g_dnssecLOG) { L <<Logger::Warning << x; }
 const char *dStates[]={"nodata", "nxdomain", "nxqtype", "empty non-terminal", "insecure", "opt-out"};
-const char *vStates[]={"Indeterminate", "Bogus", "Insecure", "Secure", "NTA"};
 
-typedef set<DNSKEYRecordContent> keyset_t;
-vector<DNSKEYRecordContent> getByTag(const keyset_t& keys, uint16_t tag)
+DNSSECValidator::DNSSECValidator(DNSRecordOracle& oracle, const bool& trace) : trace(trace), recordOracle(&oracle)
+{}
+
+DNSSECValidator::DNSSECValidator(const bool& trace) : trace(trace) {
+  auto s = SRRecordOracle();
+  recordOracle = std::make_shared<SRRecordOracle>(s);
+}
+
+vector<DNSKEYRecordContent> DNSSECValidator::getByTag(const keyset_t& keys, uint16_t tag)
 {
   vector<DNSKEYRecordContent> ret;
   for(const auto& key : keys)
@@ -28,7 +33,7 @@ vector<DNSKEYRecordContent> getByTag(const keyset_t& keys, uint16_t tag)
 // FIXME: needs a zone argument, to avoid things like 6840 4.1
 // FIXME: Add ENT support
 // FIXME: Make usable for non-DS records and hook up to validateRecords (or another place)
-static dState getDenial(const cspmap_t &validrrsets, const DNSName& qname, const uint16_t& qtype)
+dState DNSSECValidator::getDenial(const cspmap_t &validrrsets, const DNSName& qname, const uint16_t& qtype)
 {
   for(const auto& v : validrrsets) {
     LOG("Do have: "<<v.first.first<<"/"<<DNSRecordContent::NumberToType(v.first.second)<<endl);
@@ -112,7 +117,7 @@ static dState getDenial(const cspmap_t &validrrsets, const DNSName& qname, const
  * Finds all the zone-cuts between begin (longest name) and end (shortest name),
  * returns them all zone cuts, including end, but (possibly) not begin
  */
-vector<DNSName> getZoneCuts(const DNSName& begin, const DNSName& end, DNSRecordOracle& dro)
+vector<DNSName> DNSSECValidator::getZoneCuts(const DNSName& begin, const DNSName& end)
 {
   vector<DNSName> ret;
   if(!begin.isPartOf(end))
@@ -127,7 +132,7 @@ vector<DNSName> getZoneCuts(const DNSName& begin, const DNSName& end, DNSRecordO
     qname = DNSName(labelsToAdd.back()) + qname;
     labelsToAdd.pop_back();
     bool foundCut = false;
-    auto records = dro.get(qname, (uint16_t)QType::NS);
+    auto records = recordOracle->get(qname, QType::NS);
     for (const auto record : records) {
       if(record.d_name != qname || record.d_type != QType::NS)
         continue;
@@ -140,7 +145,7 @@ vector<DNSName> getZoneCuts(const DNSName& begin, const DNSName& end, DNSRecordO
   return ret;
 }
 
-void validateWithKeySet(const cspmap_t& rrsets, cspmap_t& validated, const keyset_t& keys)
+void DNSSECValidator::validateWithKeySet(const cspmap_t& rrsets, cspmap_t& validated, const keyset_t& keys)
 {
   validated.clear();
   /*  cerr<<"Validating an rrset with following keys: "<<endl;
@@ -206,7 +211,7 @@ void validateWithKeySet(const cspmap_t& rrsets, cspmap_t& validated, const keyse
 
 const char *g_rootDS;
 
-cspmap_t harvestCSPFromRecs(const vector<DNSRecord>& recs)
+cspmap_t DNSSECValidator::harvestCSPFromRecs(const vector<DNSRecord>& recs)
 {
   cspmap_t cspmap;
   for(const auto& rec : recs) {
@@ -226,7 +231,7 @@ cspmap_t harvestCSPFromRecs(const vector<DNSRecord>& recs)
   return cspmap;
 }
 
-vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
+vState DNSSECValidator::getKeysFor(const DNSName& zone, keyset_t &keyset)
 {
   auto luaLocal = g_luaconfs.getLocal();
   auto anchors = luaLocal->dsAnchors;
@@ -273,7 +278,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
   if (tmp)
     dsmap = *tmp;
 
-  auto zoneCuts = getZoneCuts(zone, lowestTA, dro);
+  auto zoneCuts = getZoneCuts(zone, lowestTA);
 
   LOG("Found the following zonecuts:")
   for(const auto& zonecut : zoneCuts)
@@ -289,8 +294,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
     keyset_t tkeys; // tentative keys
     validkeys.clear();
 
-    //    cerr<<"got DS for ["<<qname<<"], grabbing DNSKEYs"<<endl;
-    auto records=dro.get(*zoneCutIter, (uint16_t)QType::DNSKEY);
+    auto records=recordOracle->get(*zoneCutIter, QType::DNSKEY);
     // this should use harvest perhaps
     for(const auto& rec : records) {
       if(rec.d_name != *zoneCutIter)
@@ -429,7 +433,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
     toSign.clear();
     toSignTags.clear();
 
-    auto recs=dro.get(*(zoneCutIter+1), QType::DS);
+    auto recs=recordOracle->get(*(zoneCutIter+1), QType::DS);
 
     cspmap_t cspmap=harvestCSPFromRecs(recs);
 
@@ -469,22 +473,96 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
   return Bogus;
 }
 
+vState DNSSECValidator::validateRecords(const vector<DNSRecord>& records)
+{
+  if (records.empty())
+    return Insecure; // can't secure nothing
+
+  vState state = Indeterminate;
+
+  cspmap_t cspmap=harvestCSPFromRecs(records);
+/*
+  if (trace) {
+    LOG("Got "<<cspmap.size()<<" RRSETs: "<<endl);
+    for(const auto& csp : cspmap) {
+      LOG("Going to validate: "<<csp.first.first<<"/"<<DNSRecordContent::NumberToType(csp.first.second)<<": "<<csp.second.signatures.size()<<" sigs for "<<csp.second.records.size()<<" records"<<endl);
+    }
+  }
+  */
+
+  set<DNSKEYRecordContent> keys;
+  cspmap_t validrrsets;
+
+  bool hadNTA = false;
+  bool mayUpgradeToSecure = true;
+
+  for(const auto& csp : cspmap) {
+    for(const auto& sig : csp.second.signatures) {
+      vState newState = getKeysFor(sig->d_signer, keys);
+
+      if (newState == Bogus) // No hope
+        return Bogus;
+
+      if (mayUpgradeToSecure && newState == Secure)
+        state = Secure;
+
+      if (newState == Insecure || newState == NTA) // We can never go back to Secure
+        state = Insecure;
+
+      if (newState == NTA)
+        hadNTA = true;
+
+      mayUpgradeToSecure = false;
+
+      LOG("! state = "<<vStates[state]<<", now have "<<keys.size()<<" keys"<<endl);
+      for(const auto& k : keys) {
+        LOG("Key: "<<k.getZoneRepresentation()<< " {tag="<<k.getTag()<<"}"<<endl);
+      }
+    }
+  }
+  LOG("Took "<<recordOracle->d_queries<<" queries"<<endl);
+
+  if (state != Secure) {
+    if(state == Insecure || keys.empty()) {
+      if (hadNTA) {
+        return NTA;
+      }
+      return Insecure;
+    }
+    // The state is Indeterminate
+    return state;
+  }
+
+  // Now the key is known to be secure, let's validate the records
+  validateWithKeySet(cspmap, validrrsets, keys);
+
+  if(validrrsets.size() == cspmap.size())// shortcut - everything was ok
+    return Secure;
+
+  for(const auto& csp : cspmap) {
+    LOG(csp.first.first<<"|"<<DNSRecordContent::NumberToType(csp.first.second)<<" with "<<csp.second.signatures.size()<<" signatures"<<endl);
+    if(!csp.second.signatures.empty() && !validrrsets.count(csp.first)) {
+      LOG("Lacks signature, must have one, signatures: "<<csp.second.signatures.size()<<", valid rrsets: "<<validrrsets.count(csp.first)<<endl);
+      return Bogus;
+    }
+  }
+  return Insecure;
+}
 
 
-
-string dotEscape(string name)
+string DNSSECValidator::dotEscape(string name)
 {
   return "\"" + boost::replace_all_copy(name, "\"", "\\\"") + "\"";
 }
 
-string dotName(string type, DNSName name, string tag)
+string DNSSECValidator::dotName(string type, DNSName name, string tag)
 {
   if(tag == "")
     return type+" "+name.toString();
   else
     return type+" "+name.toString()+"/"+tag;
 }
-void dotNode(string type, DNSName name, string tag, string content)
+void DNSSECValidator::dotNode(string type, DNSName name, string tag, string content)
 {
 #ifdef GRAPHVIZ
   cout<<"    "
@@ -493,7 +571,7 @@ void dotNode(string type, DNSName name, string tag, string content)
 #endif
 }
 
-void dotEdge(DNSName zone, string type1, DNSName name1, string tag1, string type2, DNSName name2, string tag2, string color)
+void DNSSECValidator::dotEdge(DNSName zone, string type1, DNSName name1, string tag1, string type2, DNSName name2, string tag2, string color)
 {
 #ifdef GRAPHVIZ
   cout<<"    ";

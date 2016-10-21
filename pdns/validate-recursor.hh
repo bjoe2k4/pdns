@@ -25,7 +25,7 @@
 #include "validate.hh"
 #include "logger.hh"
 
-vState validateRecords(const vector<DNSRecord>& recs);
+vState validateRecords(const vector<DNSRecord>& recs, const bool& tracedQuery = false);
 
 /* Off: 3.x behaviour, we do no DNSSEC, no EDNS
    ProcessNoValidate: we gather DNSSEC records on all queries, but we will never validate

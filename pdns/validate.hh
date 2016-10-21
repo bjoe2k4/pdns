@@ -26,23 +26,15 @@
 #include <vector>
 #include "namespaces.hh"
 #include "dnsrecords.hh"
- 
-extern bool g_dnssecLOG;
+#include "dnsrecordoracle.hh"
+#include "vstate.hh"
+#include "syncres.hh"
 
-// 4033 5
-enum vState { Indeterminate, Bogus, Insecure, Secure, NTA };
-extern const char *vStates[];
+extern bool g_dnssecLOG;
 
 // NSEC(3) results
 enum dState { NODATA, NXDOMAIN, NXQTYPE, ENT, INSECURE, OPTOUT};
 extern const char *dStates[];
-
-class DNSRecordOracle
-{
-public:
-  virtual std::vector<DNSRecord> get(const DNSName& qname, uint16_t qtype)=0;
-};
-
 
 struct ContentSigPair
 {
@@ -51,8 +43,33 @@ struct ContentSigPair
   // ponder adding a validate method that accepts a key
 };
 typedef map<pair<DNSName,uint16_t>, ContentSigPair> cspmap_t;
-typedef std::set<DSRecordContent> dsmap_t;
-void validateWithKeySet(const cspmap_t& rrsets, cspmap_t& validated, const std::set<DNSKEYRecordContent>& keys);
-cspmap_t harvestCSPFromRecs(const vector<DNSRecord>& recs);
-vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, std::set<DNSKEYRecordContent> &keyset);
 
+class DNSSECValidator
+{
+  bool trace;
+  public:
+    DNSSECValidator(const bool& trace=false);
+    DNSSECValidator(DNSRecordOracle& recordOracle, const bool& trace=false);
+    typedef std::set<DSRecordContent> dsmap_t;
+
+    /* should become the enrtypoint */
+    vState validateRecords(const vector<DNSRecord>& records);
+
+  private:
+    void validateWithKeySet(const cspmap_t& rrsets, cspmap_t& validated, const std::set<DNSKEYRecordContent>& keys);
+    vState getKeysFor(const DNSName& zone, std::set<DNSKEYRecordContent> &keyset);
+
+    // Required as input for validateWithKeyset (called by validateRecords in validate-recursor.cc)
+    cspmap_t harvestCSPFromRecs(const vector<DNSRecord>& recs);
+    typedef set<DNSKEYRecordContent> keyset_t;
+    shared_ptr<DNSRecordOracle> recordOracle;
+    vector<DNSKEYRecordContent> getByTag(const keyset_t& keys, uint16_t tag);
+    dState getDenial(const cspmap_t &validrrsets, const DNSName& qname, const uint16_t& qtype);
+    vector<DNSName> getZoneCuts(const DNSName& begin, const DNSName& end);
+
+    /* Graphviz related */
+    void dotEdge(DNSName zone, string type1, DNSName name1, string tag1, string type2, DNSName name2, string tag2, string color="");
+    void dotNode(string type, DNSName name, string tag, string content);
+    string dotName(string type, DNSName name, string tag);
+    string dotEscape(string name);
+};

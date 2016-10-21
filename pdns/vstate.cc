@@ -19,27 +19,4 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-#pragma once
-#include "sholder.hh"
-#include "sortlist.hh"
-#include "filterpo.hh"
-#include "remote_logger.hh"
-#include "validate.hh"
-
-class LuaConfigItems 
-{
-public:
-  LuaConfigItems();
-  SortList sortlist;
-  DNSFilterEngine dfe;
-  map<DNSName,DNSSECValidator::dsmap_t> dsAnchors;
-  map<DNSName,std::string> negAnchors;
-  std::shared_ptr<RemoteLogger> protobufServer{nullptr};
-  uint8_t protobufMaskV4{32};
-  uint8_t protobufMaskV6{128};
-  bool protobufTaggedOnly{false};
-};
-
-extern GlobalStateHolder<LuaConfigItems> g_luaconfs;
-void loadRecursorLuaConfig(const std::string& fname, bool checkOnly);
-
+const char *vStates[]={"Indeterminate", "Bogus", "Insecure", "Secure", "NTA"};

@@ -39,7 +39,7 @@
 #include <utility>
 #include <deque>
 #include "logger.hh"
-#include "validate.hh"
+#include "vstate.hh"
 #include "misc.hh"
 #include "arguments.hh"
 #include "lwres.hh"

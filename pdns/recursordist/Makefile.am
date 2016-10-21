@@ -130,7 +130,8 @@ pdns_recursor_SOURCES = \
 	ueberbackend.hh \
 	unix_utility.cc \
 	utility.hh \
-	validate.cc validate.hh validate-recursor.cc validate-recursor.hh \
+	validate.cc validate.hh validate-recursor.cc validate-recursor.hh dnsrecordoracle.hh srrecordoracle.hh \
+	vstate.hh vstate.cc \
 	version.cc version.hh \
 	webserver.cc webserver.hh \
 	ws-api.cc ws-api.hh \
