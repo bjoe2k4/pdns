@@ -22,5 +22,8 @@
 #pragma once
 
 // 4033 5
-enum vState { Indeterminate, Bogus, Insecure, Secure, NTA };
-extern const char *vStates[];
+// Ordered by 'how secure' the state is, this allows for comparing two states,
+// the higher the vState, the 'worse' the validation result
+enum vState { Indeterminate, Secure, Insecure, NTA, Bogus };
+
+std::ostream & operator<<(std::ostream &os, const vState& state);

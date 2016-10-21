@@ -19,4 +19,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-const char *vStates[]={"Indeterminate", "Bogus", "Insecure", "Secure", "NTA"};
+
+#include <string>
+#include <vstate.hh>
+
+static const char *vStates[]={"Indeterminate", "Bogus", "Insecure", "Secure", "NTA"};
+
+std::ostream & operator<<(std::ostream &os, const vState& state)
+{
+  return os << std::to_string(*vStates[state]);
+}

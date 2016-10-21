@@ -493,28 +493,17 @@ vState DNSSECValidator::validateRecords(const vector<DNSRecord>& records)
   set<DNSKEYRecordContent> keys;
   cspmap_t validrrsets;
 
-  bool hadNTA = false;
-  bool mayUpgradeToSecure = true;
-
   for(const auto& csp : cspmap) {
     for(const auto& sig : csp.second.signatures) {
       vState newState = getKeysFor(sig->d_signer, keys);
 
-      if (newState == Bogus) // No hope
+      if (newState == Bogus)
         return Bogus;
 
-      if (mayUpgradeToSecure && newState == Secure)
-        state = Secure;
+      if (newState > state)
+        state = newState;
 
-      if (newState == Insecure || newState == NTA) // We can never go back to Secure
-        state = Insecure;
-
-      if (newState == NTA)
-        hadNTA = true;
-
-      mayUpgradeToSecure = false;
-
-      LOG("! state = "<<vStates[state]<<", now have "<<keys.size()<<" keys"<<endl);
+      LOG("! state = "<<state<<", now have "<<keys.size()<<" keys"<<endl);
       for(const auto& k : keys) {
         LOG("Key: "<<k.getZoneRepresentation()<< " {tag="<<k.getTag()<<"}"<<endl);
       }
@@ -522,16 +511,10 @@ vState DNSSECValidator::validateRecords(const vector<DNSRecord>& records)
   }
   LOG("Took "<<recordOracle->d_queries<<" queries"<<endl);
 
-  if (state != Secure) {
-    if(state == Insecure || keys.empty()) {
-      if (hadNTA) {
-        return NTA;
-      }
-      return Insecure;
-    }
-    // The state is Indeterminate
+  // Was the state of the key anything else but Secure?
+  // If so, there is no way anymore to be secure
+  if (state >= Insecure)
     return state;
-  }
 
   // Now the key is known to be secure, let's validate the records
   validateWithKeySet(cspmap, validrrsets, keys);
