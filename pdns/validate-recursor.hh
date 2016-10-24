@@ -34,9 +34,12 @@ vState validateRecords(const vector<DNSRecord>& recs, const bool& tracedQuery = 
    ValidateAll: DNSSEC issue -> servfail
 */
 
-enum class DNSSECMode { Off, Process, ProcessNoValidate, ValidateForLog, ValidateAll };
-extern DNSSECMode g_dnssecmode;
-extern bool g_dnssecLogBogus;
+enum class DNSSECMode { Off, Client, On };
+enum class DNSSECLog { Off, Bogus, All };
+
+extern DNSSECMode g_dnssecvalidation;
+extern DNSSECLog g_dnsseclog;
+extern DNSSECMode g_dnssecservfail;;
 
 bool checkDNSSECDisabled();
 bool warnIfDNSSECDisabled(const string& msg);

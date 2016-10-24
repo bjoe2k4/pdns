@@ -346,33 +346,42 @@ string doSetCarbonServer(T begin, T end)
 }
 
 template<typename T>
-string doSetDnssecLogBogus(T begin, T end)
+string doSetDnssecLog(T begin, T end)
 {
   if(checkDNSSECDisabled())
-    return "DNSSEC is disabled in the configuration, not changing the Bogus logging setting\n";
+    return "DNSSEC is disabled in the configuration, not changing the logging setting\n";
 
   if (begin == end)
-    return "No DNSSEC Bogus logging setting specified\n";
+    return "No DNSSEC logging setting specified\n";
 
   if (pdns_iequals(*begin, "on") || pdns_iequals(*begin, "yes")) {
-    if (!g_dnssecLogBogus) {
+    if (g_dnsseclog != DNSSECLog::All) {
+      L<<Logger::Warning<<"Enabeling DNSSEC logging, requested via control channel"<<endl;
+      g_dnsseclog = DNSSECLog::All;
+      return "DNSSEC logging enabled\n";
+    }
+    return "DNSSEC logging was already enabled\n";
+  }
+
+  if (pdns_iequals(*begin, "bogus")) {
+    if (g_dnsseclog != DNSSECLog::Bogus) {
       L<<Logger::Warning<<"Enabeling DNSSEC Bogus logging, requested via control channel"<<endl;
-      g_dnssecLogBogus = true;
+      g_dnsseclog = DNSSECLog::Bogus;
       return "DNSSEC Bogus logging enabled\n";
     }
     return "DNSSEC Bogus logging was already enabled\n";
   }
 
   if (pdns_iequals(*begin, "off") || pdns_iequals(*begin, "no")) {
-    if (g_dnssecLogBogus) {
-      L<<Logger::Warning<<"Disabeling DNSSEC Bogus logging, requested via control channel"<<endl;
-      g_dnssecLogBogus = false;
-      return "DNSSEC Bogus logging disabled\n";
+    if (g_dnsseclog != DNSSECLog::Off) {
+      L<<Logger::Warning<<"Disabeling DNSSEC logging, requested via control channel"<<endl;
+      g_dnsseclog = DNSSECLog::Off;
+      return "DNSSEC logging disabled\n";
     }
-    return "DNSSEC Bogus logging was already disabled\n";
+    return "DNSSEC logging was already disabled\n";
   }
 
-  return "Unknown DNSSEC Bogus setting: '" + *begin +"'\n";
+  return "Unknown DNSSEC Log setting: '" + *begin +"'\n";
 }
 
 template<typename T>
@@ -1178,7 +1187,7 @@ string RecursorControlParser::getAnswer(const string& question, RecursorControlP
 "reload-zones                     reload all auth and forward zones\n"
 "set-minimum-ttl value            set minimum-ttl-override\n"
 "set-carbon-server                set a carbon server for telemetry\n"
-"set-dnssec-log-bogus SETTING     enable (SETTING=yes) or disable (SETTING=no) logging of DNSSEC validation failures\n"
+"set-dnssec-log SETTING           enable (SETTING=yes), disable (SETTING=no) or Bogus-only (SETTING=bogus) logging of DNSSEC validation results\n"
 "trace-regex [regex]              emit resolution trace for matching queries (empty regex to clear trace)\n"
 "top-largeanswer-remotes          show top remotes receiving large answers\n"
 "top-queries                      show top queries\n"
@@ -1351,8 +1360,8 @@ string RecursorControlParser::getAnswer(const string& question, RecursorControlP
     return getTAs();
   }
 
-  if (cmd=="set-dnssec-log-bogus")
-    return doSetDnssecLogBogus(begin, end);
+  if (cmd=="set-dnssec-log")
+    return doSetDnssecLog(begin, end);
 
   return "Unknown command '"+cmd+"', try 'help'\n";
 }

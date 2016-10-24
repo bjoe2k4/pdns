@@ -132,9 +132,10 @@ set-carbon-server *CARBON SERVER* [*CARBON OURNAME*]
 :    Set the carbon-server setting to *CARBON SERVER*. If *CARBON OURNAME* is not
      empty, also set the carbon-ourname setting to *CARBON OURNAME*.
 
-set-dnssec-log-bogus *SETTING*
-:    Set dnssec-log-bogus setting to *SETTING*. Set to 'on' or 'yes' to log DNSSEC
-     validation failures and to 'no' or 'off' to disable logging these failures.
+set-dnssec-log *SETTING*
+:    Set dnssec-log setting to *SETTING*. Set to 'on' or 'yes' to log DNSSEC
+     validation results, to 'bogus' to log Bogus results and to 'no' or 'off' to
+     disable logging these results.
 
 set-minimum-ttl *NUM*
 :    Set minimum-ttl-override to *NUM*.

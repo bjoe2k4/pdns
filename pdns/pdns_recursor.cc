@@ -723,7 +723,7 @@ void startDoResolve(void *p)
       sr.d_requestor=dc->d_remote;
     }
 
-    if(g_dnssecmode != DNSSECMode::Off) {
+    if(g_dnssecvalidation != DNSSECMode::Off) {
       sr.d_doDNSSEC=true;
 
       // Does the requestor want DNSSEC records?
@@ -987,7 +987,7 @@ void startDoResolve(void *p)
       pw.getHeader()->rcode=res;
 
       // Does the validation mode or query demand validation?
-      if(!shouldNotValidate && (g_dnssecmode == DNSSECMode::ValidateAll || g_dnssecmode==DNSSECMode::ValidateForLog || ((dc->d_mdp.d_header.ad || DNSSECOK) && g_dnssecmode==DNSSECMode::Process))) {
+      if(!shouldNotValidate && (g_dnssecvalidation == DNSSECMode::On || ((dc->d_mdp.d_header.ad || DNSSECOK) && g_dnssecvalidation==DNSSECMode::Client))) {
         try {
           if(sr.doLog()) {
             L<<Logger::Warning<<"Starting validation of answer to "<<dc->d_mdp.d_qname<<"|"<<QType(dc->d_mdp.d_qtype).getName()<<" for "<<dc->d_remote.toStringWithPort()<<endl;
@@ -995,7 +995,7 @@ void startDoResolve(void *p)
           
           auto state=validateRecords(ret, tracedQuery);
           if(state == Secure) {
-            if(sr.doLog()) {
+            if(sr.doLog() || g_dnsseclog == DNSSECLog::All) {
               L<<Logger::Warning<<"Answer to "<<dc->d_mdp.d_qname<<"|"<<QType(dc->d_mdp.d_qtype).getName()<<" for "<<dc->d_remote.toStringWithPort()<<" validates correctly"<<endl;
             }
             
@@ -1004,27 +1004,29 @@ void startDoResolve(void *p)
               pw.getHeader()->ad=1;
           }
           else if(state == Insecure) {
-            if(sr.doLog()) {
+            if(sr.doLog() || g_dnsseclog == DNSSECLog::All) {
               L<<Logger::Warning<<"Answer to "<<dc->d_mdp.d_qname<<"|"<<QType(dc->d_mdp.d_qtype).getName()<<" for "<<dc->d_remote.toStringWithPort()<<" validates as Insecure"<<endl;
             }
             
             pw.getHeader()->ad=0;
           }
           else if(state == Bogus) {
-            if(g_dnssecLogBogus || sr.doLog() || g_dnssecmode == DNSSECMode::ValidateForLog) {
+            if(sr.doLog() || g_dnsseclog >= DNSSECLog::Bogus) {
               L<<Logger::Warning<<"Answer to "<<dc->d_mdp.d_qname<<"|"<<QType(dc->d_mdp.d_qtype).getName()<<" for "<<dc->d_remote.toStringWithPort()<<" validates as Bogus"<<endl;
             }
             
             // Does the query or validation mode sending out a SERVFAIL on validation errors?
-            if(!pw.getHeader()->cd && (g_dnssecmode == DNSSECMode::ValidateAll || dc->d_mdp.d_header.ad || DNSSECOK)) {
-              if(sr.doLog()) {
+            if(!pw.getHeader()->cd &&
+                (g_dnssecservfail == DNSSECMode::On ||
+                 ((dc->d_mdp.d_header.ad || DNSSECOK) && g_dnssecservfail == DNSSECMode::Client))) {
+              if(sr.doLog() || g_dnsseclog >= DNSSECLog::Bogus) {
                 L<<Logger::Warning<<"Sending out SERVFAIL for "<<dc->d_mdp.d_qname<<"|"<<QType(dc->d_mdp.d_qtype).getName()<<" because recursor or query demands it for Bogus results"<<endl;
               }
               
               pw.getHeader()->rcode=RCode::ServFail;
               goto sendit;
             } else {
-              if(sr.doLog()) {
+              if(sr.doLog() || g_dnsseclog >= DNSSECLog::Bogus) {
                 L<<Logger::Warning<<"Not sending out SERVFAIL for "<<dc->d_mdp.d_qname<<"|"<<QType(dc->d_mdp.d_qtype).getName()<<" Bogus validation since neither config nor query demands this"<<endl;
               }
             }
@@ -2635,23 +2637,42 @@ int serviceMain(int argc, char*argv[])
     exit(99);
   }
 
-  // keep this ABOVE loadRecursorLuaConfig!
-  if(::arg()["dnssec"]=="off")
-    g_dnssecmode=DNSSECMode::Off;
-  else if(::arg()["dnssec"]=="process-no-validate")
-    g_dnssecmode=DNSSECMode::ProcessNoValidate;
-  else if(::arg()["dnssec"]=="process")
-    g_dnssecmode=DNSSECMode::Process;
-  else if(::arg()["dnssec"]=="validate")
-    g_dnssecmode=DNSSECMode::ValidateAll;
-  else if(::arg()["dnssec"]=="log-fail")
-    g_dnssecmode=DNSSECMode::ValidateForLog;
+  // keep all DNSSEC setting parsing ABOVE loadRecursorLuaConfig!
+  if(::arg()["dnssec-validation"] == "yes") {
+    g_dnssecvalidation = DNSSECMode::On;
+  } else if (::arg()["dnssec-validation"] == "client") {
+    g_dnssecvalidation = DNSSECMode::Client;
+  } else if (::arg()["dnssec-validation"] == "no") {
+    g_dnssecvalidation = DNSSECMode::Off;
+  }
   else {
-    L<<Logger::Error<<"Unknown DNSSEC mode "<<::arg()["dnssec"]<<endl;
+    L<<Logger::Error<<"Unknown DNSSEC validation mode "<<::arg()["dnssec-validation"]<<endl;
     exit(1);
   }
 
-  g_dnssecLogBogus = ::arg().mustDo("dnssec-log-bogus");
+  if(::arg()["dnssec-servfail"] == "yes") {
+    g_dnssecservfail = DNSSECMode::On;
+  } else if (::arg()["dnssec-servfail"] == "client") {
+    g_dnssecservfail = DNSSECMode::Client;
+  } else if (::arg()["dnssec-servfail"] == "no") {
+    g_dnssecservfail = DNSSECMode::Off;
+  }
+  else {
+    L<<Logger::Error<<"Unknown DNSSEC mode "<<::arg()["dnssec-servfail"]<<endl;
+    exit(1);
+  }
+
+  if(::arg()["dnssec-log"] == "all" || ::arg()["dnssec-log"] == "yes") {
+    g_dnsseclog = DNSSECLog::All;
+  } else if (::arg()["dnssec-log"] == "bogus") {
+    g_dnsseclog = DNSSECLog::Bogus;
+  } else if (::arg()["dnssec-log"] == "no") {
+    g_dnsseclog = DNSSECLog::Off;
+  }
+  else {
+    L<<Logger::Error<<"Unknown DNSSEC mode "<<::arg()["dnssec-log"]<<endl;
+    exit(1);
+  }
 
   loadRecursorLuaConfig(::arg()["lua-config-file"], ::arg().mustDo("daemon"));
 
@@ -2692,7 +2713,7 @@ int serviceMain(int argc, char*argv[])
     SyncRes::setDefaultLogMode(SyncRes::Log);
     ::arg().set("quiet")="no";
     g_quiet=false;
-    g_dnssecLOG=true;
+    g_dnsseclog=DNSSECLog::All;
   }
 
   SyncRes::s_minimumTTL = ::arg().asNum("minimum-ttl-override");
@@ -2984,8 +3005,9 @@ int main(int argc, char **argv)
     ::arg().set("local-address","IP addresses to listen on, separated by spaces or commas. Also accepts ports.")="127.0.0.1";
     ::arg().setSwitch("non-local-bind", "Enable binding to non-local addresses by using FREEBIND / BINDANY socket options")="no";
     ::arg().set("trace","if we should output heaps of logging. set to 'fail' to only log failing domains")="off";
-    ::arg().set("dnssec", "DNSSEC mode: off/process-no-validate (default)/process/log-fail/validate")="process-no-validate";
-    ::arg().set("dnssec-log-bogus", "Log DNSSEC bogus validations")="no";
+    ::arg().set("dnssec-validation", "DNSSEC validation mode: yes/client/no (default)")="no";
+    ::arg().set("dnssec-log", "Log DNSSEC validation results (all/bogus/no (default))")="no";
+    ::arg().set("dnssec-servfail", "Send SERVFAIL on Bogus DNSSEC validation results (yes/client (default)/no)")="yes";
     ::arg().set("daemon","Operate as a daemon")="no";
     ::arg().setSwitch("write-pid","Write a PID file")="yes";
     ::arg().set("loglevel","Amount of logging. Higher is more. Do not set below 3")="4";
@@ -3155,13 +3177,13 @@ int getRootNS(void) {
   SyncRes sr(g_now);
   sr.setDoEDNS0(true);
   sr.setNoCache();
-  sr.d_doDNSSEC = (g_dnssecmode != DNSSECMode::Off);
+  sr.d_doDNSSEC = (g_dnssecvalidation != DNSSECMode::Off);
 
   vector<DNSRecord> ret;
   int res=-1;
   try {
     res=sr.beginResolve(g_rootdnsname, QType(QType::NS), 1, ret);
-    if (g_dnssecmode != DNSSECMode::Off && g_dnssecmode != DNSSECMode::ProcessNoValidate) {
+    if (g_dnssecvalidation != DNSSECMode::Off) {
       auto state = validateRecords(ret);
       if (state == Bogus)
         throw PDNSException("Got Bogus validation result for .|NS");

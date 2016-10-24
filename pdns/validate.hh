@@ -30,8 +30,6 @@
 #include "vstate.hh"
 #include "syncres.hh"
 
-extern bool g_dnssecLOG;
-
 // NSEC(3) results
 enum dState { NODATA, NXDOMAIN, NXQTYPE, ENT, INSECURE, OPTOUT};
 extern const char *dStates[];

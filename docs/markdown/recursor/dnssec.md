@@ -3,24 +3,74 @@ As of 4.0.0, the PowerDNS Recursor has support for DNSSEC processing and
 experimental support for DNSSEC validation.
 
 # DNSSEC settings
+Between the 4.0 and 4.1 releases, the DNSSEC settings have been changed, please review the setiong related to your version.
+
+## 4.1.X
+The PowerDNS Recursor has 3 different settings related to DNSSEC, these allow operators to 'test the waters' or have more or less visibility.
+
+### `dnssec-validation`
+This setting controls whether or not the PowerDNS Recursor processes queries:
+
+#### `no`
+This is the default.
+In this mode, the default, **no** DNSSEC processing takes place.
+The PowerDNS Recursor will not set the DNSSEC OK (DO) bit in the outgoing queries and will ignore the DO and AD bits in queries.
+In this mode, the behaviour is equal to the PowerDNS Recursor 3.X.
+
+#### `client`
+In this mode, the Recursor will set the DNSSEC OK (DO) bit in all outgoing queries.
+However, the PowerDNS Recursor will only validate records when the client wants DNSSEC answers.
+Validation is performed when the client query has one of the two DNSSEC related flags set (DO and/or AD)
+
+#### `yes`
+Sets the DO bit on all outgoing queries and will perform DNSSEC validation for all queries.
+
+### `dnssec-servfail`
+This setting determines what happens when a DNSSEC validation is Bogus.
+
+#### `yes`
+This is the default.
+Always send a SERVFAIL when the result of a validation is bogus.
+
+#### `client`
+Send a SERVFAIL when the client requested DNSSEC processing with the DO and/or AD flag set.
+
+#### `no`
+Never send a SERVFAIL when the validation result is bogus.
+This mode comes in handy when [`dnssec-log`](#dnssec-log) is enabled to get a feel of the validation results.
+
+### `dnssec-log`
+This determines what is logged regarding DNSSEC validations.
+
+#### `off`
+This is the default.
+Does not log anything related to DNSSEC validation results
+
+#### `bogus`
+Only log results that are bogus.
+
+#### `on`
+Log all validation results.
+
+## 4.0.X
 The PowerDNS Recursor has 5 different levels of DNSSEC processing, which can be
 set with the [`dnssec`](settings.md#dnssec) setting in the `recursor.conf`. In
 order from least to most processing, these are:
 
-## `off`
+### `off`
 In this mode, **no** DNSSEC processing takes place. The PowerDNS Recursor will
 not set the DNSSEC OK (DO) bit in the outgoing queries and will ignore the DO and
 AD bits in queries. In this mode, the behaviour is equal to the PowerDNS Recursor
 3.X.
 
-## `process-no-validate`
+### `process-no-validate`
 The default mode. In this mode the Recursor acts as a "security aware, non-validating"
 nameserver, meaning it will set the DO-bit on outgoing queries and will provide
 DNSSEC related RRsets (NSEC, RRSIG) to clients that ask for them (by means of a
 DO-bit in the query), except for zones provided through the `auth-zones` setting. 
 It will not do any validation in this mode, not even when requested by the client.
 
-## `process`
+### `process`
 When `dnssec` is set to `process` the behaviour is similar to [`process-no-validate`](#process-no-validate).
 However, the recursor will try to validate the data if at least one of the DO or AD bits is set in the query; in that case, it will set the AD-bit in the response when the data is validated successfully, or send SERVFAIL when the validation comes up bogus.
 
@@ -28,19 +78,19 @@ However, the recursor will try to validate the data if at least one of the DO or
 This lead to interoperability issues with older client software.
 From 4.0.1-onward, the DO-bit is also taken into account when determining whether to validate.
 
-## `log-fail`
+### `log-fail`
 In this mode, the recursor will attempt to validate all data it retrieves from
 authoritative servers, regardless of the client's DNSSEC desires, and will log the
 validation result. This mode can be used to determine the extra load and amount
 of possibly bogus answers before turning on full-blown validation. Responses to
 client queries are the same as with `process`.
 
-## `validate`
+### `validate`
 The highest mode of DNSSEC processing. In this mode, all queries will be be validated
 and will be answered with a SERVFAIL in case of bogus data, regardless of the
 client's request.
 
-## What, when?
+### What, when?
 The descriptions above are a bit terse, here's a table describing different scenarios
 with regards to the `dnssec` mode.
 

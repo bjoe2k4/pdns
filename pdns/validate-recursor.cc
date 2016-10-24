@@ -1,15 +1,16 @@
 #include "validate-recursor.hh"
 #include "validate.hh"
 
-DNSSECMode g_dnssecmode{DNSSECMode::ProcessNoValidate};
-bool g_dnssecLogBogus;
+DNSSECMode g_dnssecvalidation{DNSSECMode::Off};
+DNSSECMode g_dnssecservfail{DNSSECMode::On};
+DNSSECLog g_dnsseclog{DNSSECLog::Off};
 
 bool checkDNSSECDisabled() {
   return warnIfDNSSECDisabled("");
 }
 
 bool warnIfDNSSECDisabled(const string& msg) {
-  if(g_dnssecmode == DNSSECMode::Off) {
+  if(g_dnssecvalidation == DNSSECMode::Off) {
     if (!msg.empty())
       L<<Logger::Warning<<msg<<endl;
     return true;

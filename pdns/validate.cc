@@ -8,9 +8,7 @@
 #include "dnsrecordoracle.hh"
 #include "srrecordoracle.hh"
 
-bool g_dnssecLOG{false};
-
-#define LOG(x) if(trace || g_dnssecLOG) { L <<Logger::Warning << x; }
+#define LOG(x) if(trace) { L <<Logger::Warning << x; }
 const char *dStates[]={"nodata", "nxdomain", "nxqtype", "empty non-terminal", "insecure", "opt-out"};
 
 DNSSECValidator::DNSSECValidator(DNSRecordOracle& oracle, const bool& trace) : trace(trace), recordOracle(&oracle)

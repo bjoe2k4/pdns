@@ -73,7 +73,7 @@ int asyncresolve(const ComboAddress& ip, const DNSName& domain, int type, bool d
    * an "upstream query". To stay true to "dnssec=off means 3.X behaviour", we
    * only set +CD on forwarded query in any mode other than dnssec=off.
    */
-  pw.getHeader()->cd=(sendRDQuery && g_dnssecmode != DNSSECMode::Off);
+  pw.getHeader()->cd=(sendRDQuery && g_dnssecvalidation != DNSSECMode::Off);
 
   string ping;
   bool weWantEDNSSubnet=false;
@@ -88,7 +88,7 @@ int asyncresolve(const ComboAddress& ip, const DNSName& domain, int type, bool d
       weWantEDNSSubnet=true;
     }
 
-    pw.addOpt(g_outgoingEDNSBufsize, 0, g_dnssecmode == DNSSECMode::Off ? 0 : EDNSOpts::DNSSECOK, opts); 
+    pw.addOpt(g_outgoingEDNSBufsize, 0, g_dnssecvalidation == DNSSECMode::Off ? 0 : EDNSOpts::DNSSECOK, opts); 
     pw.commit();
   }
   lwr->d_rcode = 0;

@@ -179,6 +179,7 @@ in combination with [`daemon`](#daemon) as all logging will disappear.
 * One of `off`, `process-no-validate`, `process`, `log-fail`, `validate`, String
 * Default: `process-no-validate` (**note**: was `process` until 4.0.0-alpha2)
 * Available since: 4.0.0
+* Removed in 4.1.0 (use [`dnssec-validate`](#dnssec-validate), [`dnssec-log`](#dnssec-log) and [`dnssec-servfail`])
 
 Set the mode for DNSSEC processing:
 
@@ -203,13 +204,43 @@ responses.
 #### `validate`
 Full blown DNSSEC validation. Send SERVFAIL to clients on bogus responses.
 
+## `dnssec-log`
+* One off `no`, `bogus` or `all`
+* Default: `no`
+* Available since: 4.1.0
+
+When set to `all` (or `yes`), log every DNSSEC validation result, when set to `bogus`, only bogus validations are logged.
+Setting this to `no` disables logging of DNSSEC validation results.
+
 ## `dnssec-log-bogus`
 * Boolean
 * Default: no
 * Available since: 4.0.0
+* Removed in 4.1.0 (use [`dnssec-validate`](#dnssec-validate), [`dnssec-log`](#dnssec-log) and [`dnssec-servfail`])
 
 Log every DNSSEC validation failure.
 **Note**: This is not logged per-query but every time records are validated as Bogus.
+
+## `dnssec-servfail`
+* One of `no`, `client` or `yes`
+* Default: `yes`
+* Available since: 4.1.0
+
+Whether to send a SERVFAIL response when the DNSSEC validation is bogus.
+Set to `client` to only respond to clients that ask for DNSSEC (via the AD and/or DO-bit in the query).
+The `no` setting disables sending SERVFAIL answers for bogus results and the `yes` setting will always send SERVFAIL for bogus results.
+
+**Note:** This setting has little effect if [`dnssec-validation`](#dnssec-validation) is set to `no`.
+
+## `dnssec-validation`
+* One of `no`, `client` or `yes`
+* Default: `no`
+* Available since: 4.1.0
+
+Whether to perform DNSSEC validation, set to `client` to only validat when a client asks for DNSSEC (via the AD and/or DO-bit in the query).
+The `no` setting disables validation completely and `yes` will always validate answers.
+
+**Note:** This setting has little effect if [`dnssec-validation`](#dnssec-validation) is set to `no`.
 
 ## `dont-query`
 * Netmasks, comma separated
