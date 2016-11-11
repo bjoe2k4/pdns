@@ -14,7 +14,8 @@ class testExpired(RecursorTest):
     """
     _confdir = 'Expired'
 
-    _config_template = """dnssec=validate"""
+    _config_template = """dnssec-validation=yes
+dnssec-log=on"""
 
     _auth_env = {'LD_PRELOAD':os.environ.get('LIBFAKETIME'),
                  'FAKETIME':'-15d'}

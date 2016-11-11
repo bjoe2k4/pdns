@@ -7,15 +7,16 @@ from recursortests import RecursorTest
 
 class TestFlags(RecursorTest):
     _confdir = 'Flags'
-    _config_template = """dnssec=%s"""
-    _config_params = ['_dnssec_setting']
-    _dnssec_setting = None
+    _config_template = """dnssec-validation=%s
+dnssec-servfail=%s"""
+    _config_params = ['_dnssec_validation_setting', '_dnssec_servfail_setting']
+    _dnssec_validation_setting = None
+    _dnssec_servfail_setting = None
     _recursors = {}
 
-    _dnssec_setting_ports = {'off': 5300,
-                             'process-no-validate': 5301,
-                             'process': 5302,
-                             'validate': 5303}
+    _dnssec_ports = [5300, 5301, 5302, 5303]
+    _dnssec_validation_settings = ['no', 'yes', 'client', 'yes']
+    _dnssec_servfail_settings = ['no', 'no', 'client', 'yes']
 
     @classmethod
     def setUp(cls):
@@ -32,13 +33,14 @@ class TestFlags(RecursorTest):
         cls.generateAllAuthConfig(confdir)
         cls.startAllAuth(confdir)
 
-        for dnssec_setting, port in cls._dnssec_setting_ports.items():
-            cls._dnssec_setting = dnssec_setting
-            recConfdir = os.path.join(confdir, dnssec_setting)
+        for x in range(len(cls._dnssec_ports)):
+            cls._dnssec_validation_setting = cls._dnssec_validation_settings[x]
+            cls._dnssec_servfail_setting = cls._dnssec_servfail_settings[x]
+            recConfdir = os.path.join(confdir, cls._dnssec_ports[x])
             cls.createConfigDir(recConfdir)
             cls.generateRecursorConfig(recConfdir)
-            cls.startRecursor(recConfdir, port)
-            cls._recursors[dnssec_setting] = cls._recursor
+            cls.startRecursor(recConfdir, cls._dnssec_ports[x])
+            cls._recursors[cls._dnssec_ports[x]] = cls._recursor
 
     @classmethod
     def setUpSockets(cls):

@@ -4,7 +4,8 @@ import os
 
 class BasicDNSSEC(RecursorTest):
     __test__ = False
-    _config_template = """dnssec=validate"""
+    _config_template = """dnssec-validation=yes
+dnssec-log=on"""
 
     @classmethod
     def setUp(cls):
