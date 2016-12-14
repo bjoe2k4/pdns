@@ -1,0 +1,11 @@
+FROM {{distro}}:{{distro_release}}
+RUN yum install -y rpm-build rpmdevtools epel-release && yum groupinstall -y "Development Tools" && yum install -y python34 && curl https://bootstrap.pypa.io/get-pip.py | python3 && pip3 install jinja2 configparser && rpmdev-setuptree
+{% if builddeps %}
+RUN yum install -y {{builddeps}}
+{% endif %}
+{% if extra_steps %}
+{% for step in extra_steps %}
+{{ step }}
+{% endfor %}
+{% endif %}
+WORKDIR /build
