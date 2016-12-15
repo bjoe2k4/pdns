@@ -9,6 +9,7 @@ import subprocess
 import sys
 import traceback
 import tempfile
+import json
 
 try:
     import jinja2
@@ -18,34 +19,31 @@ except ImportError:
 PRODUCTS = {
     'auth': {
         'tarball_name': 'pdns',
-        'rootdir': '/',
+        'rootdir': '',
         'configure': '--without-modules --without-dynmodules '
                      '--disable-depedency-tracking'
     },
     'recursor': {
         'tarball_name': 'pdns-recursor',
-        'rootdir': '/pdns/recursordist',
+        'rootdir': 'pdns/recursordist',
         'configure': '--disable-depedency-tracking'
     },
     'dnsdist': {
         'tarball_name': 'dnsdist',
-        'rootdir': '/pdns/dnsdistdist',
+        'rootdir': 'pdns/dnsdistdist',
         'configure': '--disable-depedency-tracking',
-        'distros': {
+        'dependencies': {
             'centos': {
-                '6': {
-                    'builddeps': ['']
-                },
-                '7': {
-                    'build-requires': ['systemd-devel', 'libsodium-devel', ]
-                    'requires-pre': ['shadow-utils']
-                }
+                'all': ['boost-devel', 'lua-devel', 'protobuf-compiler',
+                        'protobuf-devel', 're2-devel', 'readline-devel',
+                        'libedit-devel'],
+                '7': ['systemd', 'systemd-devel', 'libsodium-devel']
             }
         }
     }
 }
 
-class pdns_pkg_builder:
+class pdns_builder:
 
     def __init__(self, version, dockersocketpath, destdir):
         self.config = {}
@@ -65,17 +63,18 @@ class pdns_pkg_builder:
         except ImportError:
             raise Exception('Please install docker-py')
 
-        self.dockerclient = docker.Client(base_url=self.dockersocketpath)
+        self.dockerclient = docker.Client(base_url=self.config['dockersocketpath'])
 
     def _docker_build(self, dockerfile, image):
         self._create_docker_client()
 
         f = BytesIO(dockerfile.encode('utf8'))
-        resp = [x for x in self.dockerclient.build(fileobj=f, rm=True,
+        resp = [x.decode() for x in self.dockerclient.build(fileobj=f, rm=True,
                                                    tag=image)]
-        if not resp[-1].startswith('Succesfully built'):
+        resp = [json.loads(e).get('stream', '') for e in resp]
+        if not resp[-1].startswith('Successfully built'):
             raise Exception('Error while creating docker image:\n{}'.format(
-                '\n'.join(resp)))
+                ''.join(resp)))
 
     def _docker_run(self, image, command, volumes=None, binds=None,
                     retrieve_path=None, retrieve_file=None):
@@ -117,8 +116,13 @@ class pdns_pkg_builder:
 
         self.dockerclient.remove_container(container)
 
+
+class pdns_pkg_builder(pdns_builder):
     def build_with_docker(self, product, distro, distro_release):
-        builddeps = ' '.join(SETTINGS[distro][distro_release]['builddeps'])
+        builddeps = PRODUCTS[product]['dependencies'][distro]['all']
+        builddeps.extend(PRODUCTS[product]['dependencies'][distro].get(distro_release, []))
+        builddeps = ' '.join(builddeps)
+
         template_name = '{}.j2'.format(distro)
 
         dockerfile = jinja2.Environment(
@@ -145,7 +149,8 @@ class pdns_pkg_builder:
             self.config['destdir'], '{}-{}-{}-{}.tar'.format(
                 PRODUCTS[product]['tarball_name'],
                 self.config['version'],
-                distro))
+                distro,
+                distro_release))
 
         command = ['/build/build-scripts/build-pkg.py',
                    'build-pkg', product,
@@ -157,26 +162,24 @@ class pdns_pkg_builder:
     def generate_tarball(self, product):
         mydir = os.path.join(self.config.get('rootdir'),
                              PRODUCTS[product]['rootdir'])
-        tmpdir = tempfile.mkdtemp()
-        shutil.copy(mydir, tmpdir)
-
-        workdir = os.path.join(tmpdir, os.path.split(mydir)[-1])
+        tmpdir = os.path.join(tempfile.mkdtemp(), 'build')
+        shutil.copytree(mydir, tmpdir)
 
         try:
             subprocess.check_output(
                 ['autoreconf', '-i'],
-                cwd=workdir,
+                cwd=tmpdir,
                 env={'PDNS_BUILD_NUMBER': os.environ.get(
                         'PDNS_BUILD_NUMBER', ''),
                      'IS_RELEASE': self.config.get('is_release', 'NO')},
                 stderr=subprocess.STDOUT)
             subprocess.check_output(
-                './configure {}'.format(PRODUCTS[product]['configure']),
-                cwd=workdir,
+                ['./configure', '{}'.format(PRODUCTS[product]['configure'])],
+                cwd=tmpdir,
                 stderr=subprocess.STDOUT)
             subprocess.check_output(
                 ['make', 'dist'],
-                cwd=workdir,
+                cwd=tmpdir,
                 stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as e:
             raise Exception('Problem while creating tarball:\n{}'.format(
@@ -229,14 +232,14 @@ class pdns_pkg_builder:
             self.build_with_docker(product, distro, distro_release)
             return
 
-        distro, _, _ = platform.dist()
-        if distro in ['centos', 'redhat']:
+        self.distro, self.distro_release, _ = platform.dist()
+        if self.distro in ['centos', 'redhat']:
             self.build_rpm(product)
             return
-        if distro in ['debian', 'ubuntu']:
+        if self.distro in ['debian', 'ubuntu']:
             self.build_deb(product)
             return
-        print("Unknown distribution: " + distro)
+        print("Unknown distribution: " + self.distro)
         return
 
 

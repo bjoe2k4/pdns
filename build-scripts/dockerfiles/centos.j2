@@ -1,5 +1,7 @@
 FROM {{distro}}:{{distro_release}}
 RUN yum install -y rpm-build rpmdevtools epel-release && yum groupinstall -y "Development Tools" && yum install -y python34 && curl https://bootstrap.pypa.io/get-pip.py | python3 && pip3 install jinja2 configparser && rpmdev-setuptree
+# required to build the tarball
+RUN curl -L http://www.colm.net/files/ragel/ragel-6.9.tar.gz | gunzip | tar xf - -C /tmp && cd /tmp/ragel-6.9 && ./configure && make install && yum install -y pandoc
 {% if builddeps %}
 RUN yum install -y {{builddeps}}
 {% endif %}
