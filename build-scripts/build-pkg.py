@@ -44,7 +44,6 @@ PRODUCTS = {
 }
 
 class pdns_builder:
-
     def __init__(self, version, dockersocketpath, destdir):
         self.config = {}
         self.config['rootdir'] = os.path.realpath(
@@ -116,8 +115,44 @@ class pdns_builder:
 
         self.dockerclient.remove_container(container)
 
+    def _move_files(self, files):
+        os.makedirs(self.config['destdir'], exist_ok=True)
 
-class pdns_pkg_builder(pdns_builder):
+        if type(files != list):
+            files = [files]
+
+        for f in files:
+            shutil.move(f, self.config['destdir'])
+
+    def generate_tarball(self, product):
+        tmpdir = os.path.join(tempfile.mkdtemp(), 'build')
+        print(self.config.get('rootdir'))
+        shutil.copytree(self.config.get('rootdir'), tmpdir)
+        workdir = os.path.join(tmpdir, PRODUCTS[product]['rootdir'])
+
+        try:
+            subprocess.check_output(
+                ['autoreconf', '-i'],
+                cwd=workdir,
+                env={'PDNS_BUILD_NUMBER': os.environ.get(
+                        'PDNS_BUILD_NUMBER', ''),
+                     'IS_RELEASE': self.config.get('is_release', 'NO')},
+                stderr=subprocess.STDOUT)
+            subprocess.check_output(
+                ['./configure', '{}'.format(PRODUCTS[product]['configure'])],
+                cwd=workdir,
+                stderr=subprocess.STDOUT)
+            subprocess.check_output(
+                ['make', 'dist'],
+                cwd=workdir,
+                stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError as e:
+            raise Exception('Problem while creating tarball:\n{}'.format(
+                e.output.decode()))
+
+        files = glob.glob(workdir + '/*.tar.bz2')
+        self._move_files(files)
+
     def build_with_docker(self, product, distro, distro_release):
         builddeps = PRODUCTS[product]['dependencies'][distro]['all']
         builddeps.extend(PRODUCTS[product]['dependencies'][distro].get(distro_release, []))
@@ -159,36 +194,6 @@ class pdns_pkg_builder(pdns_builder):
         self._docker_run(image, command, volumes, binds, retrieve_path,
                          retrieve_file)
 
-    def generate_tarball(self, product):
-        mydir = os.path.join(self.config.get('rootdir'),
-                             PRODUCTS[product]['rootdir'])
-        tmpdir = os.path.join(tempfile.mkdtemp(), 'build')
-        shutil.copytree(mydir, tmpdir)
-
-        try:
-            subprocess.check_output(
-                ['autoreconf', '-i'],
-                cwd=tmpdir,
-                env={'PDNS_BUILD_NUMBER': os.environ.get(
-                        'PDNS_BUILD_NUMBER', ''),
-                     'IS_RELEASE': self.config.get('is_release', 'NO')},
-                stderr=subprocess.STDOUT)
-            subprocess.check_output(
-                ['./configure', '{}'.format(PRODUCTS[product]['configure'])],
-                cwd=tmpdir,
-                stderr=subprocess.STDOUT)
-            subprocess.check_output(
-                ['make', 'dist'],
-                cwd=tmpdir,
-                stderr=subprocess.STDOUT)
-        except subprocess.CalledProcessError as e:
-            raise Exception('Problem while creating tarball:\n{}'.format(
-                e.output.decode()))
-        self.config['tarball'] = '{}/{}-{}.tar.bz2'.format(
-            workdir,
-            PRODUCTS[product]['tarball_name'],
-            self.config['version'])
-
     def build_rpm(self, product, pkg_release='1pdns%{dist}'):
         self.generate_tarball(product)
         subprocess.call(['rpmdev-setuptree'])
@@ -218,15 +223,6 @@ class pdns_pkg_builder(pdns_builder):
             self.config['version']))
         self._move_files(files)
 
-    def _move_files(self, files):
-        os.makedirs(self.config['destdir'], exist_ok=True)
-
-        if type(files != list):
-            files = [files]
-
-        for f in files:
-            shutil.move(f, self.config['destdir'])
-
     def build_pkgs(self, docker, product, distro=None, distro_release=None):
         if docker:
             self.build_with_docker(product, distro, distro_release)
@@ -255,8 +251,8 @@ if __name__ == "__main__":
     build_parser = subparsers.add_parser(
         'build-pkg', help='Build packages for different distributions')
     build_parser.add_argument(
-        'pkg', metavar=('PKG'), choices=PRODUCTS.keys(),
-        help='Build one of these packages: %(choices)s')
+        'program', metavar=('PROGRAM'), choices=PRODUCTS.keys(),
+        help='Build one of these programs: %(choices)s')
     build_parser.add_argument(
         '--docker', nargs=2, metavar=('DISTRO', 'RELEASE'),
         help='Build the packages inside a docker container')
@@ -291,9 +287,9 @@ if __name__ == "__main__":
                                                          ''),
                      'IS_RELEASE': is_release}
                 ).decode('utf-8')
-        a = pdns_pkg_builder(version, args.docker_socket, args.move_to)
+        a = pdns_builder(version, args.docker_socket, args.move_to)
 
-        product = args.pkg
+        product = args.program
         docker = True if args.docker else False
         distro = args.docker[0].lower() if docker else None
         distro_release = args.docker[1].lower() if docker else None

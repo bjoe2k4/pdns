@@ -1,0 +1,18 @@
+from debian:jessie
+RUN apt-get update && apt-get install -y \
+     autoconf \
+     automake \
+     bison \
+     build-essential \
+     curl \
+     flex \
+     libboost-all-dev \
+     libedit-dev \
+     liblua5.1-dev \
+     libprotobuf-dev \
+     libssl-dev \
+     pandoc \
+     pandoc \
+     protobuf-compiler \
+     python3 \
+     ragel
