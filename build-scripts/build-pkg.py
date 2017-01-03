@@ -155,8 +155,13 @@ class pdns_builder:
             raise Exception('Problem while creating tarball:\n{}'.format(
                 e.output.decode()))
 
-        files = glob.glob(workdir + '/*.tar.bz2')
-        self._move_files(files)
+        # Created by autoreconf
+        with open('.version') as f:
+            version = f.readline().strip()
+
+        tarball = os.path.join(workdir, '{}-{}.tar.bz2'.format(PRODUCTS[product]['tarball_name'],
+                                           version))
+        self._move_files(tarball)
 
     def build_with_docker(self, product, distro, distro_release):
         builddeps = PRODUCTS[product]['dependencies'][distro]['all']
@@ -194,13 +199,13 @@ class pdns_builder:
 
         command = ['/build/build-scripts/build-pkg.py',
                    'build-pkg', product,
-                   '--version', version,
+                   '--tarball-path', os.path.join(
+                        '/build', os.path.split(self.config['tarball'])[-1]),
                    '--move-to', retrieve_path]
         self._docker_run(image, command, volumes, binds, retrieve_path,
                          retrieve_file)
 
     def build_rpm(self, product, pkg_release='1pdns%{dist}'):
-        self.generate_tarball(product)
         subprocess.call(['rpmdev-setuptree'])
         rpmbuilddir = os.path.join(os.path.expanduser('~'), 'rpmbuild')
         sourcesdir = os.path.join(rpmbuilddir, 'SOURCES')
@@ -228,7 +233,9 @@ class pdns_builder:
             self.config['version']))
         self._move_files(files)
 
-    def build_pkgs(self, docker, product, distro=None, distro_release=None):
+    def build_pkgs(self, docker, product, tarball=None, distro=None,
+                   distro_release=None):
+        self.config['tarball'] = tarball
         if docker:
             self.build_with_docker(product, distro, distro_release)
             return
@@ -244,6 +251,18 @@ class pdns_builder:
         return
 
 
+def gen_version(is_release=None):
+    mydir = os.path.realpath(
+        os.path.join(
+            os.path.dirname(__file__),
+            '..'))
+    is_release = 'YES' if is_release else 'NO'
+    version = subprocess.check_output(
+        [os.path.join(mydir, 'build-aux', 'gen-version')],
+        env={'PDNS_BUILD_NUMBER': os.environ.get('PDNS_BUILD_NUMBER', ''),
+             'IS_RELEASE': is_release}
+        ).decode('utf-8')
+
 if __name__ == "__main__":
     import argparse
 
@@ -258,6 +277,13 @@ if __name__ == "__main__":
     build_parser.add_argument(
         'program', metavar=('PROGRAM'), choices=PRODUCTS.keys(),
         help='Build one of these programs: %(choices)s')
+    tarball_args = build_parser.add_mutually_exclusive_group()
+    tarball_args.add_argument(
+        '--generate-tarball', action='store_true',
+        help='Only generate a .tar.bz')
+    tarball_args.add_argument(
+        '--use-tarball', nargs=1, metavar='TARBALL',
+        help='Use this tarball to build the package')
     build_parser.add_argument(
         '--docker', nargs=2, metavar=('DISTRO', 'RELEASE'),
         help='Build the packages inside a docker container')
@@ -268,39 +294,38 @@ if __name__ == "__main__":
     build_parser.add_argument(
         '--move-to', nargs=1, metavar=('PATH'), default=[os.getcwd()],
         help='Move created packages to this directory')
-    versioning = build_parser.add_mutually_exclusive_group()
-    versioning.add_argument(
+    build_parser.add_argument(
         '--is-release', action='store_true',
         help='Set to generate the version number based on the git tag')
-    versioning.add_argument(
-        '--version',
-        help="Set the version number explicitly")
 
-    mydir = os.path.realpath(
-        os.path.join(
-            os.path.dirname(__file__),
-            '..'))
     args = parser.parse_args()
 
-    if vars(args)['selected_mode'] == 'build-pkg':
-        version = vars(args).get('version', None)
-        if not version:
-            is_release = 'YES' if vars(args).get('is_release', None) else 'NO'
-            version = subprocess.check_output(
-                [os.path.join(mydir, 'build-aux', 'gen-version')],
-                env={'PDNS_BUILD_NUMBER': os.environ.get('PDNS_BUILD_NUMBER',
-                                                         ''),
-                     'IS_RELEASE': is_release}
-                ).decode('utf-8')
-        a = pdns_builder(version, args.docker_socket, args.move_to[0])
+    selected_mode = vars(args)['selected_mode']
 
-        product = args.program
+    if vars(args)['selected_mode'] == 'build-pkg':
+        v = vars(args).get('version', None)
+        ir = vars(args).get('is_release', None)
+        version = gen_version(ir)
+        builder = pdns_builder(version, args.docker_socket, args.move_to[0])
+
         docker = True if args.docker else False
         distro = args.docker[0].lower() if docker else None
         distro_release = args.docker[1].lower() if docker else None
+        product = args.program
+
+        only_tarball = True if args.generate_tarball else False
+        tarball_path = vars(args).get('use_tarball', None)
 
         try:
-            a.build_pkgs(docker, product, distro, distro_release)
+            if not tarball_path:
+                builder.generate_tarball(docker, product)
+                tarball_path = os.path.join(args.move_to[0],
+                    '{}-{}.tar.bz2'.format(PRODUCTS[product]['tarball_name'],
+                                           version))
+            if only_tarball:
+                sys.exit(0)
+            builder.build_pkgs(docker, product, tarball_path, distro,
+                distro_release)
         except Exception as e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
             print(''.join('!! ' + line for line in traceback.format_exception(
