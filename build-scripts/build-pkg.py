@@ -115,19 +115,24 @@ class pdns_builder:
 
         self.dockerclient.remove_container(container)
 
-    def _move_files(self, files):
+    def _move_files(self, files, dest=None):
         os.makedirs(self.config['destdir'], exist_ok=True)
 
-        if type(files != list):
+        if type(files) != list:
             files = [files]
 
+        if dest == None:
+            dest = self.config['destdir']
+
         for f in files:
-            shutil.move(f, self.config['destdir'])
+            shutil.move(f, dest)
 
     def generate_tarball(self, product):
         tmpdir = os.path.join(tempfile.mkdtemp(), 'build')
-        print(self.config.get('rootdir'))
-        shutil.copytree(self.config.get('rootdir'), tmpdir)
+        try:
+            shutil.copytree(self.config.get('rootdir'), tmpdir, symlinks=True)
+        except:
+            pass
         workdir = os.path.join(tmpdir, PRODUCTS[product]['rootdir'])
 
         try:
@@ -261,7 +266,7 @@ if __name__ == "__main__":
         default='unix:///var/run/docker.sock',
         help='The URI for the docker socket.')
     build_parser.add_argument(
-        '--move-to', nargs=1, metavar=('PATH'), default=os.getcwd(),
+        '--move-to', nargs=1, metavar=('PATH'), default=[os.getcwd()],
         help='Move created packages to this directory')
     versioning = build_parser.add_mutually_exclusive_group()
     versioning.add_argument(
@@ -287,7 +292,7 @@ if __name__ == "__main__":
                                                          ''),
                      'IS_RELEASE': is_release}
                 ).decode('utf-8')
-        a = pdns_builder(version, args.docker_socket, args.move_to)
+        a = pdns_builder(version, args.docker_socket, args.move_to[0])
 
         product = args.program
         docker = True if args.docker else False
