@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
      libprotobuf-dev \
      libssl-dev \
      pandoc \
-     pandoc \
      protobuf-compiler \
      python3 \
-     ragel
+     python3-jinja2 \
+     ragel \

@@ -10,6 +10,9 @@ import sys
 import traceback
 import tempfile
 import json
+import logging
+import tarfile
+
 
 try:
     import jinja2
@@ -17,21 +20,21 @@ except ImportError:
     raise Exception('Please install jinja2')
 
 PRODUCTS = {
-    'auth': {
+    'pdns': {
         'tarball_name': 'pdns',
         'rootdir': '',
-        'configure': '--without-modules --without-dynmodules '
-                     '--disable-depedency-tracking'
+        'tar_configure': ['--without-modules', '--without-dynmodules',
+                          '--enable-tools', '--disable-depedency-tracking']
     },
     'recursor': {
         'tarball_name': 'pdns-recursor',
         'rootdir': 'pdns/recursordist',
-        'configure': '--disable-depedency-tracking'
+        'tar_configure': ['--disable-depedency-tracking']
     },
     'dnsdist': {
         'tarball_name': 'dnsdist',
         'rootdir': 'pdns/dnsdistdist',
-        'configure': '--disable-depedency-tracking',
+        'tar_configure': ['--disable-depedency-tracking'],
         'dependencies': {
             'centos': {
                 'all': ['boost-devel', 'lua-devel', 'protobuf-compiler',
@@ -43,12 +46,66 @@ PRODUCTS = {
     }
 }
 
+OS = {
+    'debian': {
+        'jessie': {
+            'deps': [],
+            'pdns': {
+                'backends': [],
+                'deps': [],
+                'configure': []
+            },
+            'recursor': {
+                'deps': [],
+                'configure': []
+            },
+            'dnsdist': {
+                'deps': [],
+                'configure': []
+            }
+        }
+    },
+    'centos': {
+        '6': {
+            'deps': [],
+            'pdns': {
+                'backends': [],
+                'deps': [],
+                'configure': []
+            },
+            'recursor': {
+                'deps': [],
+                'configure': []
+            },
+            'dnsdist': {
+                'deps': [],
+                'configure': []
+            }
+        },
+        '7': {
+            'deps': [],
+            'pdns': {
+                'backends': [],
+                'deps': [],
+                'configure': []
+            },
+            'recursor': {
+                'deps': [],
+                'configure': []
+            },
+            'dnsdist': {
+                'deps': [],
+                'configure': []
+            }
+        }
+    }
+}
+
 class pdns_builder:
-    def __init__(self, version, dockersocketpath, destdir):
+    def __init__(self, dockersocketpath, destdir):
         self.config = {}
         self.config['rootdir'] = os.path.realpath(
             os.path.join(os.path.dirname(__file__), '..'))
-        self.config['version'] = version
         self.config['dockersocketpath'] = dockersocketpath
         self.config['destdir'] = destdir
         self.dockerclient = None
@@ -127,41 +184,6 @@ class pdns_builder:
         for f in files:
             shutil.move(f, dest)
 
-    def generate_tarball(self, product):
-        tmpdir = os.path.join(tempfile.mkdtemp(), 'build')
-        try:
-            shutil.copytree(self.config.get('rootdir'), tmpdir, symlinks=True)
-        except:
-            pass
-        workdir = os.path.join(tmpdir, PRODUCTS[product]['rootdir'])
-
-        try:
-            subprocess.check_output(
-                ['autoreconf', '-i'],
-                cwd=workdir,
-                env={'PDNS_BUILD_NUMBER': os.environ.get(
-                        'PDNS_BUILD_NUMBER', ''),
-                     'IS_RELEASE': self.config.get('is_release', 'NO')},
-                stderr=subprocess.STDOUT)
-            subprocess.check_output(
-                ['./configure', '{}'.format(PRODUCTS[product]['configure'])],
-                cwd=workdir,
-                stderr=subprocess.STDOUT)
-            subprocess.check_output(
-                ['make', 'dist'],
-                cwd=workdir,
-                stderr=subprocess.STDOUT)
-        except subprocess.CalledProcessError as e:
-            raise Exception('Problem while creating tarball:\n{}'.format(
-                e.output.decode()))
-
-        # Created by autoreconf
-        with open('.version') as f:
-            version = f.readline().strip()
-
-        tarball = os.path.join(workdir, '{}-{}.tar.bz2'.format(PRODUCTS[product]['tarball_name'],
-                                           version))
-        self._move_files(tarball)
 
     def build_with_docker(self, product, distro, distro_release):
         builddeps = PRODUCTS[product]['dependencies'][distro]['all']
@@ -250,6 +272,99 @@ class pdns_builder:
         print("Unknown distribution: " + self.distro)
         return
 
+class pdns_tar_builder(pdns_builder):
+    def generate_tarball_with_docker(self, product, is_release):
+        builddeps = 'automake autoconf bison build-essential curl flex git ragel pandoc'
+
+        dockerfile = jinja2.Environment(
+            loader=jinja2.FileSystemLoader('build-scripts/dockerfiles')
+                ).get_template('tarball-builder').render()
+        image = 'pdns-tar-builder'
+        self._docker_build(dockerfile, image)
+
+        this_dir = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), '..'))
+
+        retrieve_path = '/{}'.format(product)
+        retrieve_file = os.path.join(
+            self.config['destdir'], '{}.tar'.format(
+                PRODUCTS[product]['tarball_name']))
+
+        binds = [this_dir + ':' + '/build' + ':ro']
+        volumes = [this_dir]
+
+        command = ['/build/build-scripts/build-pkg.py',
+                   'generate-tarball', product,
+                   '--move-to', retrieve_path]
+        if is_release:
+            command + ['--is-release']
+        self._docker_run(image, command, volumes, binds, retrieve_path,
+                         retrieve_file)
+        f = tarfile.open(retrieve_file)
+        for member in f.members():
+            f.extract(member, path=self.config['destdir'])
+
+    def generate_tarball_locally(self, product, is_release):
+        # Copy to a temp dir to ensure the repo is not polluted
+        tmpdir = os.path.join(tempfile.mkdtemp(), 'build')
+        try:
+            shutil.copytree(self.config.get('rootdir'), tmpdir, symlinks=True)
+        except:
+            pass
+
+        workdir = os.path.join(tmpdir, PRODUCTS[product]['rootdir'])
+        try:
+            os.remove(os.path.join(workdir, '.version'))
+        except OSError:
+            pass
+
+        logging.warning('Starting tarball generation in {}'.format(workdir))
+        try:
+            subprocess.check_output(
+                ['git', 'clean', '-Xf'],
+                cwd=workdir,
+                stderr=subprocess.STDOUT)
+            subprocess.check_output(
+                ['autoreconf', '-i'],
+                cwd=workdir,
+                env={'PDNS_BUILD_NUMBER': os.environ.get(
+                        'PDNS_BUILD_NUMBER', ''),
+                     'IS_RELEASE': self.config.get('is_release', 'NO')},
+                stderr=subprocess.STDOUT)
+            subprocess.check_output(
+                ['./configure'] + PRODUCTS[product]['tar_configure'],
+                cwd=workdir,
+                stderr=subprocess.STDOUT)
+            subprocess.check_output(
+                ['make', 'dist'],
+                cwd=workdir,
+                stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError as e:
+            # cleanup
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            raise Exception('Problem while creating tarball - command "{}" '
+                            'failed\n{}'.format(' '.join(e.cmd),
+                                                e.output.decode()))
+        except:
+            # cleanup
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            raise
+
+        with open('.version') as f:
+            version = f.readline().strip()
+
+        tarball = os.path.join(workdir,
+            '{}-{}.tar.bz2'.format(PRODUCTS[product]['tarball_name'], version))
+        self._move_files(tarball)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def generate_tarball(self, product, is_release, docker):
+        if docker:
+            self.generate_tarball_with_docker(product, is_release)
+            return
+        self.generate_tarball_locally(product, is_release)
+        return
+
 
 def gen_version(is_release=None):
     mydir = os.path.realpath(
@@ -270,42 +385,53 @@ if __name__ == "__main__":
         prog="build-pkg",
         description="Package builder script for the PowerDNS software")
 
+    parser.add_argument(
+        '--docker-socket', nargs=1, metavar=('URI'),
+        default='unix:///var/run/docker.sock',
+        help='The URI for the docker socket.')
+    parser.add_argument(
+        '--move-to', nargs=1, metavar=('PATH'), default=[os.getcwd()],
+        help='Move created artifacts to this directory')
+
     subparsers = parser.add_subparsers(dest='selected_mode')
 
     build_parser = subparsers.add_parser(
         'build-pkg', help='Build packages for different distributions')
     build_parser.add_argument(
-        'program', metavar=('PROGRAM'), choices=PRODUCTS.keys(),
-        help='Build one of these programs: %(choices)s')
-    tarball_args = build_parser.add_mutually_exclusive_group()
-    tarball_args.add_argument(
-        '--generate-tarball', action='store_true',
-        help='Only generate a .tar.bz')
-    tarball_args.add_argument(
-        '--use-tarball', nargs=1, metavar='TARBALL',
-        help='Use this tarball to build the package')
-    build_parser.add_argument(
         '--docker', nargs=2, metavar=('DISTRO', 'RELEASE'),
-        help='Build the packages inside a docker container')
+        help='Build inside a container for DISTRO and RELEASE')
     build_parser.add_argument(
-        '--docker-socket', nargs=1, metavar=('URI'),
-        default='unix:///var/run/docker.sock',
-        help='The URI for the docker socket.')
-    build_parser.add_argument(
-        '--move-to', nargs=1, metavar=('PATH'), default=[os.getcwd()],
-        help='Move created packages to this directory')
-    build_parser.add_argument(
+        'tarball', metavar='TARBALL', help='Build from this tarball')
+
+    tarball_parser = subparsers.add_parser(
+        'generate-tarball', help='Generate a tarball')
+    tarball_parser.add_argument(
+        'product', metavar=('PRODUCT'), choices=PRODUCTS.keys(),
+        help='Build one of these programs: %(choices)s')
+    tarball_parser.add_argument(
         '--is-release', action='store_true',
         help='Set to generate the version number based on the git tag')
+    tarball_parser.add_argument(
+        '--docker', action='store_true',
+        help='Generate the tarball inside docker')
 
     args = parser.parse_args()
 
     selected_mode = vars(args)['selected_mode']
 
-    if vars(args)['selected_mode'] == 'build-pkg':
+    if selected_mode == 'generate-tarball':
+        builder = pdns_tar_builder(args.docker_socket, args.move_to[0])
+
         v = vars(args).get('version', None)
         ir = vars(args).get('is_release', None)
         version = gen_version(ir)
+        docker = True if args.docker else False
+        is_release = True if args.is_release else False
+
+        builder.generate_tarball(args.product, is_release, docker)
+        sys.exit(0)
+
+    if selected_mode == 'build-pkg':
         builder = pdns_builder(version, args.docker_socket, args.move_to[0])
 
         docker = True if args.docker else False
