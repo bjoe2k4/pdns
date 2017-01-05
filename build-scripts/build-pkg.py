@@ -34,7 +34,7 @@ PRODUCTS = {
         'tar_configure': ['--disable-depedency-tracking'],
         'packages': {
             'centos': {
-                'all': ['re2-devel', 'readline-devel'],
+                'all': ['re2-devel', 'libedit-devel'],
                 '7': ['systemd-devel', 'libsodium-devel']
             }
         }
@@ -197,6 +197,7 @@ class pdns_pkg_builder(pdns_builder):
         specfile = os.path.join(rpmbuilddir, 'SPECS',
                                 '{}.spec'.format(product))
         rpmdir = os.path.join(rpmbuilddir, 'RPMS', 'x86_64')
+        srpmdir = os.path.join(rpmbuilddir, 'SRPMS')
         t = jinja2.Environment(
             loader=jinja2.FileSystemLoader('build-scripts')).get_template(
                 '{}.spec.j2'.format(product)).render({
@@ -206,13 +207,16 @@ class pdns_pkg_builder(pdns_builder):
         with open(specfile, 'w') as f:
             f.write(t)
         try:
-            subprocess.check_output(['rpmbuild', '-bb', specfile],
+            subprocess.check_output(['rpmbuild', '-ba', specfile],
                                     shell=True, stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as e:
             raise Exception('Problem while building RPM:\n{}'.format(
                 e.output.decode()))
 
         files = glob.glob(rpmdir + '/{}*{}*.rpm'.format(
+            product,
+            version))
+        files += glob.glob(srpmdir + '/{}*{}*.src.rpm'.format(
             product,
             version))
         self._move_files(files)
