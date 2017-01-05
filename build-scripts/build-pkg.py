@@ -215,7 +215,7 @@ class pdns_pkg_builder(pdns_builder):
         retrieve_path = '/root/rpmbuild/{}'.format(product)
         retrieve_file = os.path.join(
             self.config['destdir'], '{}-{}-{}-{}.tar'.format(
-                PRODUCTS[product]['tarball_name'],
+                product,
                 self.config['version'],
                 distro,
                 distro_release))
@@ -361,8 +361,7 @@ class pdns_tar_builder(pdns_builder):
             version = f.readline().strip()
 
         tarball = os.path.join(
-            workdir, '{}-{}.tar.bz2'.format(PRODUCTS[product]['tarball_name'],
-                                            version))
+            workdir, '{}-{}.tar.bz2'.format(product, version))
         self._move_files(tarball)
         shutil.rmtree(tmpdir, ignore_errors=True)
 
