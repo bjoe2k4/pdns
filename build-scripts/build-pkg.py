@@ -32,70 +32,18 @@ PRODUCTS = {
     'dnsdist': {
         'rootdir': 'pdns/dnsdistdist',
         'tar_configure': ['--disable-depedency-tracking'],
-        'dependencies': {
+        'packages': {
             'centos': {
-                'all': ['boost-devel', 'lua-devel', 'protobuf-compiler',
-                        'protobuf-devel', 're2-devel', 'readline-devel',
-                        'libedit-devel'],
-                '7': ['systemd', 'systemd-devel', 'libsodium-devel']
+                'all': ['re2-devel', 'readline-devel'],
+                '7': ['systemd-devel', 'libsodium-devel']
             }
         }
     }
 }
 
-OS = {
-    'debian': {
-        'jessie': {
-            'deps': [],
-            'pdns': {
-                'backends': [],
-                'deps': [],
-                'configure': []
-            },
-            'recursor': {
-                'deps': [],
-                'configure': []
-            },
-            'dnsdist': {
-                'deps': [],
-                'configure': []
-            }
-        }
-    },
-    'centos': {
-        '6': {
-            'deps': [],
-            'pdns': {
-                'backends': [],
-                'deps': [],
-                'configure': []
-            },
-            'recursor': {
-                'deps': [],
-                'configure': []
-            },
-            'dnsdist': {
-                'deps': [],
-                'configure': []
-            }
-        },
-        '7': {
-            'deps': [],
-            'pdns': {
-                'backends': [],
-                'deps': [],
-                'configure': []
-            },
-            'recursor': {
-                'deps': [],
-                'configure': []
-            },
-            'dnsdist': {
-                'deps': [],
-                'configure': []
-            }
-        }
-    }
+ALL_DEPS = {
+    'centos': ['boost-devel', 'lua-devel', 'protobuf-compiler',
+               'protobuf-devel'],
 }
 
 
@@ -185,9 +133,13 @@ class pdns_builder:
 
 
 class pdns_pkg_builder(pdns_builder):
-    def build_with_docker(self, product, distro, distro_release):
-        builddeps = PRODUCTS[product]['dependencies'][distro]['all']
-        builddeps.extend(PRODUCTS[product]['dependencies'][distro].get(
+    def build_with_docker(self, tarball, distro, distro_release):
+        product, version = self._get_product_version(tarball)
+
+        builddeps = []
+        builddeps.extend(ALL_DEPS[distro])
+        builddeps.extend(PRODUCTS[product]['packages'][distro].get('all', []))
+        builddeps.extend(PRODUCTS[product]['packages'][distro].get(
             distro_release, []))
         builddeps = ' '.join(builddeps)
 
@@ -209,39 +161,38 @@ class pdns_pkg_builder(pdns_builder):
         this_dir = os.path.realpath(
             os.path.join(os.path.dirname(__file__), '..'))
 
-        binds = [this_dir + ':' + '/build' + ':ro']
-        volumes = [this_dir]
+        binds = [os.path.realpath(os.path.dirname(tarball)) + ':' + '/build' + ':ro']
+        volumes = [os.path.realpath(os.path.dirname(tarball))]
 
         retrieve_path = '/root/rpmbuild/{}'.format(product)
         retrieve_file = os.path.join(
             self.config['destdir'], '{}-{}-{}-{}.tar'.format(
                 product,
-                self.config['version'],
+                version,
                 distro,
                 distro_release))
 
         command = ['/build/build-scripts/build-pkg.py',
-                   'build-pkg', product,
-                   '--tarball-path', os.path.join(
-                        '/build', os.path.split(self.config['tarball'])[-1]),
-                   '--move-to', retrieve_path]
+                   '--move-to', retrieve_path,
+                   'build-pkg', '/build/' + os.path.split(tarball)[-1]]
         self._docker_run(image, command, volumes, binds, retrieve_path,
                          retrieve_file)
 
     def _get_product_version(self, tarball):
-        tmp = tarball.replace('.tar.bz2', '')
+        fname = os.path.split(tarball)[-1]
+        tmp = fname.replace('.tar.bz2', '')
         program = '-'.join(tmp.split('-')[:-1])
         if program not in PRODUCTS.keys():
             raise Exception('Unknown product in tarball name: {}'.format(
                 program))
-        version = '-'.join(tmp.split('-')[-1])
+        version = tmp.split('-')[-1]
         return (program, version)
 
     def build_rpm(self, tarball, pkg_release='1pdns%{dist}'):
         subprocess.call(['rpmdev-setuptree'])
         rpmbuilddir = os.path.join(os.path.expanduser('~'), 'rpmbuild')
         sourcesdir = os.path.join(rpmbuilddir, 'SOURCES')
-        self._move_files(self.config.get('tarball'), sourcesdir)
+        shutil.copy(tarball, sourcesdir)
         product, version = self._get_product_version(tarball)
         specfile = os.path.join(rpmbuilddir, 'SPECS',
                                 '{}.spec'.format(product))
@@ -268,7 +219,7 @@ class pdns_pkg_builder(pdns_builder):
 
     def build_pkg(self, tarball, docker, distro=None, distro_release=None):
         if docker:
-            if not all(distro, distro_release):
+            if not all([distro, distro_release]):
                 raise Exception('Building with docker request, but distro and'
                                 '/or distro_release is not set')
             self.build_with_docker(tarball, distro, distro_release)
