@@ -21,18 +21,15 @@ except ImportError:
 
 PRODUCTS = {
     'pdns': {
-        'tarball_name': 'pdns',
         'rootdir': '',
         'tar_configure': ['--without-modules', '--without-dynmodules',
                           '--enable-tools', '--disable-depedency-tracking']
     },
-    'recursor': {
-        'tarball_name': 'pdns-recursor',
+    'pdns-recursor': {
         'rootdir': 'pdns/recursordist',
         'tar_configure': ['--disable-depedency-tracking']
     },
     'dnsdist': {
-        'tarball_name': 'dnsdist',
         'rootdir': 'pdns/dnsdistdist',
         'tar_configure': ['--disable-depedency-tracking'],
         'dependencies': {
@@ -101,6 +98,7 @@ OS = {
     }
 }
 
+
 class pdns_builder:
     def __init__(self, dockersocketpath, destdir):
         self.config = {}
@@ -119,14 +117,15 @@ class pdns_builder:
         except ImportError:
             raise Exception('Please install docker-py')
 
-        self.dockerclient = docker.Client(base_url=self.config['dockersocketpath'])
+        self.dockerclient = docker.Client(
+            base_url=self.config['dockersocketpath'])
 
     def _docker_build(self, dockerfile, image):
         self._create_docker_client()
 
         f = BytesIO(dockerfile.encode('utf8'))
         resp = [x.decode() for x in self.dockerclient.build(fileobj=f, rm=True,
-                                                   tag=image)]
+                                                            tag=image)]
         resp = [json.loads(e).get('stream', '') for e in resp]
         if not resp[-1].startswith('Successfully built'):
             raise Exception('Error while creating docker image:\n{}'.format(
@@ -178,16 +177,18 @@ class pdns_builder:
         if type(files) != list:
             files = [files]
 
-        if dest == None:
+        if dest is None:
             dest = self.config['destdir']
 
         for f in files:
             shutil.move(f, dest)
 
 
+class pdns_pkg_builder(pdns_builder):
     def build_with_docker(self, product, distro, distro_release):
         builddeps = PRODUCTS[product]['dependencies'][distro]['all']
-        builddeps.extend(PRODUCTS[product]['dependencies'][distro].get(distro_release, []))
+        builddeps.extend(PRODUCTS[product]['dependencies'][distro].get(
+            distro_release, []))
         builddeps = ' '.join(builddeps)
 
         template_name = '{}.j2'.format(distro)
@@ -227,18 +228,28 @@ class pdns_builder:
         self._docker_run(image, command, volumes, binds, retrieve_path,
                          retrieve_file)
 
-    def build_rpm(self, product, pkg_release='1pdns%{dist}'):
+    def _get_product_version(self, tarball):
+        tmp = tarball.replace('.tar.bz2', '')
+        program = '-'.join(tmp.split('-')[:-1])
+        if program not in PRODUCTS.keys():
+            raise Exception('Unknown product in tarball name: {}'.format(
+                program))
+        version = '-'.join(tmp.split('-')[-1])
+        return (program, version)
+
+    def build_rpm(self, tarball, pkg_release='1pdns%{dist}'):
         subprocess.call(['rpmdev-setuptree'])
         rpmbuilddir = os.path.join(os.path.expanduser('~'), 'rpmbuild')
         sourcesdir = os.path.join(rpmbuilddir, 'SOURCES')
         self._move_files(self.config.get('tarball'), sourcesdir)
+        product, version = self._get_product_version(tarball)
         specfile = os.path.join(rpmbuilddir, 'SPECS',
                                 '{}.spec'.format(product))
         rpmdir = os.path.join(rpmbuilddir, 'RPMS', 'x86_64')
         t = jinja2.Environment(
             loader=jinja2.FileSystemLoader('build-scripts')).get_template(
                 '{}.spec.j2'.format(product)).render({
-                    'pkg_version': self.config['version'],
+                    'pkg_version': version,
                     'pkg_release': pkg_release
                     })
         with open(specfile, 'w') as f:
@@ -251,31 +262,31 @@ class pdns_builder:
                 e.output.decode()))
 
         files = glob.glob(rpmdir + '/{}*{}*.rpm'.format(
-            PRODUCTS[product]['tarball_name'],
-            self.config['version']))
+            product,
+            version))
         self._move_files(files)
 
-    def build_pkgs(self, docker, product, tarball=None, distro=None,
-                   distro_release=None):
-        self.config['tarball'] = tarball
+    def build_pkg(self, tarball, docker, distro=None, distro_release=None):
         if docker:
-            self.build_with_docker(product, distro, distro_release)
+            if not all(distro, distro_release):
+                raise Exception('Building with docker request, but distro and'
+                                '/or distro_release is not set')
+            self.build_with_docker(tarball, distro, distro_release)
             return
 
-        self.distro, self.distro_release, _ = platform.dist()
-        if self.distro in ['centos', 'redhat']:
-            self.build_rpm(product)
+        distro, distro_release, _ = platform.dist()
+        if distro in ['centos', 'redhat']:
+            self.build_rpm(tarball)
             return
-        if self.distro in ['debian', 'ubuntu']:
-            self.build_deb(product)
+        if distro in ['debian', 'ubuntu']:
+            self.build_deb(tarball)
             return
-        print("Unknown distribution: " + self.distro)
-        return
+        raise Exception("Unable to build package for {} {}".format(
+            distro, distro_release))
+
 
 class pdns_tar_builder(pdns_builder):
     def generate_tarball_with_docker(self, product, is_release):
-        builddeps = 'automake autoconf bison build-essential curl flex git ragel pandoc'
-
         dockerfile = jinja2.Environment(
             loader=jinja2.FileSystemLoader('build-scripts/dockerfiles')
                 ).get_template('tarball-builder').render()
@@ -313,10 +324,6 @@ class pdns_tar_builder(pdns_builder):
             pass
 
         workdir = os.path.join(tmpdir, PRODUCTS[product]['rootdir'])
-        try:
-            os.remove(os.path.join(workdir, '.version'))
-        except OSError:
-            pass
 
         logging.warning('Starting tarball generation in {}'.format(workdir))
         try:
@@ -350,11 +357,12 @@ class pdns_tar_builder(pdns_builder):
             shutil.rmtree(tmpdir, ignore_errors=True)
             raise
 
-        with open('.version') as f:
+        with open(os.path.join(workdir, '.version')) as f:
             version = f.readline().strip()
 
-        tarball = os.path.join(workdir,
-            '{}-{}.tar.bz2'.format(PRODUCTS[product]['tarball_name'], version))
+        tarball = os.path.join(
+            workdir, '{}-{}.tar.bz2'.format(PRODUCTS[product]['tarball_name'],
+                                            version))
         self._move_files(tarball)
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -365,18 +373,6 @@ class pdns_tar_builder(pdns_builder):
         self.generate_tarball_locally(product, is_release)
         return
 
-
-def gen_version(is_release=None):
-    mydir = os.path.realpath(
-        os.path.join(
-            os.path.dirname(__file__),
-            '..'))
-    is_release = 'YES' if is_release else 'NO'
-    version = subprocess.check_output(
-        [os.path.join(mydir, 'build-aux', 'gen-version')],
-        env={'PDNS_BUILD_NUMBER': os.environ.get('PDNS_BUILD_NUMBER', ''),
-             'IS_RELEASE': is_release}
-        ).decode('utf-8')
 
 if __name__ == "__main__":
     import argparse
@@ -422,36 +418,23 @@ if __name__ == "__main__":
     if selected_mode == 'generate-tarball':
         builder = pdns_tar_builder(args.docker_socket, args.move_to[0])
 
-        v = vars(args).get('version', None)
-        ir = vars(args).get('is_release', None)
-        version = gen_version(ir)
-        docker = True if args.docker else False
         is_release = True if args.is_release else False
+        docker = True if args.docker else False
 
         builder.generate_tarball(args.product, is_release, docker)
         sys.exit(0)
 
     if selected_mode == 'build-pkg':
-        builder = pdns_builder(version, args.docker_socket, args.move_to[0])
+        builder = pdns_pkg_builder(args.docker_socket, args.move_to[0])
 
         docker = True if args.docker else False
         distro = args.docker[0].lower() if docker else None
         distro_release = args.docker[1].lower() if docker else None
-        product = args.program
 
-        only_tarball = True if args.generate_tarball else False
-        tarball_path = vars(args).get('use_tarball', None)
+        tarball = args.tarball
 
         try:
-            if not tarball_path:
-                builder.generate_tarball(docker, product)
-                tarball_path = os.path.join(args.move_to[0],
-                    '{}-{}.tar.bz2'.format(PRODUCTS[product]['tarball_name'],
-                                           version))
-            if only_tarball:
-                sys.exit(0)
-            builder.build_pkgs(docker, product, tarball_path, distro,
-                distro_release)
+            builder.build_pkg(tarball, docker, distro, distro_release)
         except Exception as e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
             print(''.join('!! ' + line for line in traceback.format_exception(
