@@ -96,11 +96,12 @@ vState validateRecords(const ResolveContext& ctx, const vector<DNSRecord>& recs)
 
   vState state=Insecure;
   bool hadNTA = false;
+  bool hadUnknownAlgo = false;
   if(numsigs) {
     bool first = true;
     for(const auto& csp : cspmap) {
       for(const auto& sig : csp.second.signatures) {
-        vState newState = getKeysFor(sro, sig->d_signer, keys); // XXX check validity here
+        vState newState = getKeysFor(sro, sig->d_signer, keys, hadUnknownAlgo); // XXX check validity here
 
         if (newState == Bogus) // No hope
           return increaseDNSSECStateCounter(Bogus);
@@ -115,14 +116,20 @@ vState validateRecords(const ResolveContext& ctx, const vector<DNSRecord>& recs)
         }
       }
     }
+
     validateWithKeySet(cspmap, validrrsets, keys);
+
+    if (validrrsets.size() == 0 && hadUnknownAlgo) {
+      LOG("! signed with an unknown algorithm, returning Insecure"<<endl);
+      return Insecure;
+    }
   }
   else {
     LOG("! no sigs, hoping for Insecure status of "<<recs.begin()->d_name<<endl);
 
     bool first = true;
     for(const auto& rec : recs) {
-      vState newState = getKeysFor(sro, rec.d_name, keys);
+      vState newState = getKeysFor(sro, rec.d_name, keys, hadUnknownAlgo);
 
       if (newState == Bogus) // We're done
         return increaseDNSSECStateCounter(Bogus);

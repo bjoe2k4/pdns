@@ -6,6 +6,8 @@
 #include "logger.hh"
 bool g_dnssecLOG{false};
 
+static set<uint8_t> supportedAlgos;
+
 #define LOG(x) if(g_dnssecLOG) { L <<Logger::Warning << x; }
 void dotEdge(DNSName zone, string type1, DNSName name1, string tag1, string type2, DNSName name2, string tag2, string color="");
 void dotNode(string type, DNSName name, string tag, string content);
@@ -16,11 +18,11 @@ const char *dStates[]={"nodata", "nxdomain", "nxqtype", "empty non-terminal", "i
 const char *vStates[]={"Indeterminate", "Bogus", "Insecure", "Secure", "NTA"};
 
 typedef set<DNSKEYRecordContent> keyset_t;
-vector<DNSKEYRecordContent> getByTag(const keyset_t& keys, uint16_t tag)
+vector<DNSKEYRecordContent> getByTag(const keyset_t& keys, uint16_t tag, uint8_t algo)
 {
   vector<DNSKEYRecordContent> ret;
   for(const auto& key : keys)
-    if(key.getTag() == tag)
+    if(key.getTag() == tag && key.d_algorithm == algo && supportedAlgos.count(algo))
       ret.push_back(key);
   return ret;
 }
@@ -140,7 +142,8 @@ vector<DNSName> getZoneCuts(const DNSName& begin, const DNSName& end, DNSRecordO
   return ret;
 }
 
-void validateWithKeySet(const cspmap_t& rrsets, cspmap_t& validated, const keyset_t& keys)
+/* Returns -1 when there was an unknown algo */
+int validateWithKeySet(const cspmap_t& rrsets, cspmap_t& validated, const keyset_t& keys)
 {
   validated.clear();
   /*  cerr<<"Validating an rrset with following keys: "<<endl;
@@ -148,34 +151,42 @@ void validateWithKeySet(const cspmap_t& rrsets, cspmap_t& validated, const keyse
     cerr<<"\tTag: "<<key.getTag()<<" -> "<<key.getZoneRepresentation()<<endl;
   }
   */
+  bool hadUnknownAlgo = false;
   for(auto i=rrsets.begin(); i!=rrsets.end(); i++) {
     LOG("validating "<<(i->first.first)<<"/"<<DNSRecordContent::NumberToType(i->first.second)<<" with "<<i->second.signatures.size()<<" sigs"<<endl);
     for(const auto& signature : i->second.signatures) {
       vector<shared_ptr<DNSRecordContent> > toSign = i->second.records;
       
-      if(getByTag(keys,signature->d_tag).empty()) {
+      auto r = getByTag(keys, signature->d_tag, signature->d_algorithm);
+      if(r.empty()) {
 	LOG("No key provided for "<<signature->d_tag<<endl;);
 	continue;
       }
       
       string msg=getMessageForRRSET(i->first.first, *signature, toSign, true);
-      auto r = getByTag(keys,signature->d_tag); // FIXME: also take algorithm into account? right now we wrongly validate unknownalgorithm.bad-dnssec.wb.sidnlabs.nl
       for(const auto& l : r) {
-	bool isValid = false;
-	try {
-	  unsigned int now=time(0);
-	  if(signature->d_siginception < now && signature->d_sigexpire > now) {
-	    std::shared_ptr<DNSCryptoKeyEngine> dke = shared_ptr<DNSCryptoKeyEngine>(DNSCryptoKeyEngine::makeFromPublicKeyString(l.d_algorithm, l.d_key));
-	    isValid = dke->verify(msg, signature->d_signature);
-            LOG("signature by key with tag "<<signature->d_tag<<" was " << (isValid ? "" : "NOT ")<<"valid"<<endl);
-	  }
-	  else {
-	    LOG("signature is expired/not yet valid"<<endl);
+        bool isValid = false;
+	unsigned int now=time(0);
+	if(signature->d_siginception < now && signature->d_sigexpire > now) {
+          std::shared_ptr<DNSCryptoKeyEngine> dke{nullptr};
+          try {
+	    dke = shared_ptr<DNSCryptoKeyEngine>(DNSCryptoKeyEngine::makeFromPublicKeyString(l.d_algorithm, l.d_key));
           }
-	}
-	catch(std::exception& e) {
-	  LOG("Error validating with engine: "<<e.what()<<endl);
-	}
+          catch(runtime_error& e) {
+            hadUnknownAlgo = true;
+            continue;
+          }
+          try {
+	    isValid = dke->verify(msg, signature->d_signature);
+          }
+          catch(std::exception& e) {
+            LOG("Error validating with engine: "<<e.what()<<endl);
+          }
+          LOG("signature by key with tag "<<signature->d_tag<<" was " << (isValid ? "" : "NOT ")<<"valid"<<endl);
+        }
+        else {
+          LOG("signature is expired/not yet valid"<<endl);
+        }
 	if(isValid) {
 	  validated[i->first] = i->second;
           LOG("Validated "<<i->first.first<<"/"<<DNSRecordContent::NumberToType(signature->d_type)<<endl);
@@ -195,6 +206,9 @@ void validateWithKeySet(const cspmap_t& rrsets, cspmap_t& validated, const keyse
       }
     }
   }
+  if(hadUnknownAlgo)
+    return -1;
+  return 0;
 }
 
 
@@ -226,8 +240,12 @@ cspmap_t harvestCSPFromRecs(const vector<DNSRecord>& recs)
   return cspmap;
 }
 
-vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
+vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset, bool& hadUnknownAlgo)
 {
+  if (supportedAlgos.empty())
+    for (auto const &algo : DNSCryptoKeyEngine::listAllAlgosWithBackend())
+      supportedAlgos.insert(algo.first);
+
   auto luaLocal = g_luaconfs.getLocal();
   auto anchors = luaLocal->dsAnchors;
   if (anchors.empty()) // Nothing to do here
@@ -327,7 +345,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
      */
     for(auto const& dsrc : dsmap)
     {
-      auto r = getByTag(tkeys, dsrc.d_tag);
+      auto r = getByTag(tkeys, dsrc.d_tag, dsrc.d_algorithm);
       //      cerr<<"looking at DS with tag "<<dsrc.d_tag<<"/"<<i->first<<", got "<<r.size()<<" DNSKEYs for tag"<<endl;
 
       for(const auto& drc : r)
@@ -360,6 +378,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
     //    cerr<<"got "<<validkeys.size()<<"/"<<tkeys.size()<<" valid/tentative keys"<<endl;
     // these counts could be off if we somehow ended up with 
     // duplicate keys. Should switch to a type that prevents that.
+    bool hadBogus = false;
     if(validkeys.size() < tkeys.size())
     {
       // this should mean that we have one or more DS-validated DNSKEYs
@@ -368,28 +387,31 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
       // whole set
       for(auto i=sigs.begin(); i!=sigs.end(); i++)
       {
+        if (!supportedAlgos.count(i->d_algorithm)) {
+          hadUnknownAlgo = true;
+          continue;
+        }
         //        cerr<<"got sig for keytag "<<i->d_tag<<" matching "<<getByTag(tkeys, i->d_tag).size()<<" keys of which "<<getByTag(validkeys, i->d_tag).size()<<" valid"<<endl;
         string msg=getMessageForRRSET(*zoneCutIter, *i, toSign);
-        auto bytag = getByTag(validkeys, i->d_tag);
+        auto bytag = getByTag(validkeys, i->d_tag, i->d_algorithm);
         for(const auto& j : bytag) {
           //          cerr<<"validating : ";
           bool isValid = false;
-          try {
-            unsigned int now = time(0);
-            if(i->d_siginception < now && i->d_sigexpire > now) {
-              std::shared_ptr<DNSCryptoKeyEngine> dke = shared_ptr<DNSCryptoKeyEngine>(DNSCryptoKeyEngine::makeFromPublicKeyString(j.d_algorithm, j.d_key));
+          unsigned int now = time(0);
+          if(i->d_siginception < now && i->d_sigexpire > now) {
+            std::shared_ptr<DNSCryptoKeyEngine> dke{nullptr};
+            try {
+              dke = shared_ptr<DNSCryptoKeyEngine>(DNSCryptoKeyEngine::makeFromPublicKeyString(j.d_algorithm, j.d_key));
               isValid = dke->verify(msg, i->d_signature);
             }
-            else {
-              LOG("Signature on DNSKEY expired"<<endl);
+            catch(std::exception& e) {
+              LOG("Could not make a validator for signature: "<<e.what()<<endl);
             }
-          }
-          catch(std::exception& e) {
-            LOG("Could not make a validator for signature: "<<e.what()<<endl);
+          } else {
+            LOG("Signature on DNSKEY expired"<<endl);
           }
           for(uint16_t tag : toSignTags) {
-            dotEdge(*zoneCutIter,
-                "DNSKEY", *zoneCutIter, std::to_string(i->d_tag),
+            dotEdge(*zoneCutIter, "DNSKEY", *zoneCutIter, std::to_string(i->d_tag),
                 "DNSKEY", *zoneCutIter, std::to_string(tag), isValid ? "green" : "red");
           }
 
@@ -402,6 +424,7 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
           }
           else {
             LOG("Validation did not succeed!"<<endl);
+            hadBogus = true;
           }
         }
         //        if(validkeys.empty()) cerr<<"did not manage to validate DNSKEY set based on DS-validated KSK, only passing KSK on"<<endl;
@@ -410,9 +433,16 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
 
     if(validkeys.empty())
     {
-      LOG("ended up with zero valid DNSKEYs, going Bogus"<<endl);
+      LOG("ended up with zero valid DNSKEYs: ");
+      if (hadUnknownAlgo && !hadBogus) {
+        LOG("unsupported algorithm(s) were used"<<endl);
+        return Insecure;
+      }
+      if (hadBogus)
+        LOG("had Bogus key(s)"<<endl);
       return Bogus;
     }
+
     LOG("situation: we have one or more valid DNSKEYs for ["<<*zoneCutIter<<"] (want ["<<zone<<"])"<<endl);
 
     if(zoneCutIter == zoneCuts.end()-1) {
@@ -434,7 +464,10 @@ vState getKeysFor(DNSRecordOracle& dro, const DNSName& zone, keyset_t &keyset)
     cspmap_t cspmap=harvestCSPFromRecs(recs);
 
     cspmap_t validrrsets;
-    validateWithKeySet(cspmap, validrrsets, validkeys);
+    if (validateWithKeySet(cspmap, validrrsets, validkeys) == -1 && validkeys.size() == 0) {
+      LOG("got only keys with unknown algorithms, returning Insecure for the keyset"<<endl);
+      return Insecure;
+    }
 
     LOG("got "<<cspmap.count(make_pair(*(zoneCutIter+1),QType::DS))<<" records for DS query of which "<<validrrsets.count(make_pair(*(zoneCutIter+1),QType::DS))<<" valid "<<endl);
 
