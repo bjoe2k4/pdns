@@ -169,7 +169,6 @@ AC_SUBST([PROGRAM_LDFLAGS])
 
 AC_CONFIG_FILES([Makefile
 	ext/Makefile
-	ext/json11/Makefile
 	ext/yahttp/Makefile
 	ext/yahttp/yahttp/Makefile])
 

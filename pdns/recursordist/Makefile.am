@@ -1,10 +1,8 @@
-JSON11_LIBS = $(top_srcdir)/ext/json11/libjson11.la
-
 AM_CPPFLAGS = $(LUA_CFLAGS) $(YAHTTP_CFLAGS) $(BOOST_CPPFLAGS) $(BOTAN110_CFLAGS) $(NET_SNMP_CFLAGS) $(SANITIZER_FLAGS) -O3 -Wall -pthread -DSYSCONFDIR=\"${sysconfdir}\" $(SYSTEMD_CFLAGS)
 
 AM_CPPFLAGS += \
-	-I$(top_srcdir)/ext/json11 \
-	-I$(top_srcdir)/ext/rapidjson/include \
+	-I$(srcdir)/ext/json11 \
+	-I$(srcdir)/ext/rapidjson/include \
 	$(YAHTTP_CFLAGS) \
 	$(LIBCRYPTO_INCLUDES)
 
@@ -22,10 +20,14 @@ ACLOCAL_AMFLAGS = -I m4
 BUILT_SOURCES=htmlfiles.h
 CLEANFILES = htmlfiles.h \
 	dnsmessage.pb.cc \
-	dnsmessage.pb.h
+	dnsmessage.pb.h \
+	recursor.conf-dist \
+	pdns-recursor.service \
+	pdns-recursor@.service
 
-htmlfiles.h: html/*
-	./incfiles > $@
+
+htmlfiles.h: $(wildcard html/*)
+	$(srcdir)/incfiles $(srcdir) > $@
 
 SUBDIRS=ext
 
@@ -38,7 +40,7 @@ EXTRA_DIST = \
 	.version \
 	botan110signers.cc \
 	build-aux/gen-version \
-	contrib/* \
+	$(wildcard contrib/*) \
 	devpollmplexer.cc \
 	dnslabeltext.cc \
 	dnslabeltext.rl \
@@ -55,8 +57,8 @@ EXTRA_DIST = \
 	pdns_recursor.1.md \
 	portsmplexer.cc \
 	rec_control.1.md \
-	rrd/* \
-	html incfiles \
+	$(wildcard rrd/*) \
+	$(wildcard html/*) incfiles \
 	pdns-recursor.service.in
 
 sbin_PROGRAMS = pdns_recursor
@@ -88,6 +90,8 @@ pdns_recursor_SOURCES = \
 	iputils.hh iputils.cc \
 	ixfr.cc ixfr.hh \
 	json.cc json.hh \
+	ext/json11/json11.cpp \
+	ext/json11/json11.hpp \
 	lazy_allocator.hh \
 	lock.hh \
 	logger.hh logger.cc \
@@ -151,7 +155,6 @@ endif
 
 pdns_recursor_LDADD = \
 	$(YAHTTP_LIBS) \
-	$(JSON11_LIBS) \
 	$(LIBCRYPTO_LIBS) \
 	$(BOOST_CONTEXT_LIBS) \
 	$(NET_SNMP_LIBS) \
@@ -201,7 +204,7 @@ endif
 if HAVE_PROTOBUF
 if HAVE_PROTOC
 dnsmessage.pb.cc: dnsmessage.proto
-	$(AM_V_GEN)$(PROTOC) --cpp_out=./ $<
+	$(AM_V_GEN)$(PROTOC) -I$(srcdir) --cpp_out=./ $<
 
 BUILT_SOURCES += dnsmessage.pb.cc
 pdns_recursor_LDADD += $(PROTOBUF_LIBS)

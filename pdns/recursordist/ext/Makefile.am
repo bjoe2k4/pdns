@@ -1,12 +1,12 @@
 SUBDIRS = \
-	yahttp \
-	json11
+	yahttp
 
 DIST_SUBDIRS = \
-	yahttp \
-	json11
+	yahttp
 
 EXTRA_DIST = \
 	luawrapper/include/LuaContext.hpp \
 	yahttp/LICENSE \
-	json11/LICENSE.txt incbin/incbin.h 
+	json11/LICENSE.txt json11/json11.cpp json11/json11.hpp \
+	incbin/incbin.h
+
