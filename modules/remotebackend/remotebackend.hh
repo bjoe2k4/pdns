@@ -180,7 +180,7 @@ class RemoteBackend : public DNSBackend
   virtual bool startTransaction(const DNSName& domain, int domain_id);
   virtual bool commitTransaction();
   virtual bool abortTransaction();
-  virtual bool calculateSOASerial(const DNSName& domain, const SOAData& sd, time_t& serial);
+  virtual bool calculateSOASerial(const DNSName& domain, const SOAData& sd, uint32_t& serial);
   virtual bool setTSIGKey(const DNSName& name, const DNSName& algorithm, const string& content);
   virtual bool deleteTSIGKey(const DNSName& name);
   virtual bool getTSIGKeys(std::vector< struct TSIGKey > &keys);

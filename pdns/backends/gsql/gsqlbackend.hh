@@ -213,7 +213,7 @@ public:
   virtual bool updateEmptyNonTerminals(uint32_t domain_id, set<DNSName>& insert ,set<DNSName>& erase, bool remove);
   virtual bool doesDNSSEC();
 
-  virtual bool calculateSOASerial(const DNSName& domain, const SOAData& sd, time_t& serial);
+  virtual bool calculateSOASerial(const DNSName& domain, const SOAData& sd, uint32_t& serial);
 
   bool replaceRRSet(uint32_t domain_id, const DNSName& qname, const QType& qt, const vector<DNSResourceRecord>& rrset);
   bool listSubZone(const DNSName &zone, int domain_id);
