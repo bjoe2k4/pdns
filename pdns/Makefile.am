@@ -208,7 +208,7 @@ pdns_server_SOURCES = \
 	webserver.cc webserver.hh \
 	ws-api.cc ws-api.hh \
 	ws-auth.cc ws-auth.hh \
-	zoneparser-tng.cc
+	zoneparser-tng.cc zoneparser-tng.hh
 
 pdns_server_LDFLAGS = \
 	$(AM_LDFLAGS) \
@@ -298,7 +298,7 @@ pdnsutil_SOURCES = \
 	statbag.cc \
 	ueberbackend.cc \
 	unix_utility.cc \
-	zoneparser-tng.cc
+	zoneparser-tng.cc zoneparser-tng.hh
 
 pdnsutil_LDFLAGS = \
 	$(AM_LDFLAGS) \
@@ -368,7 +368,7 @@ zone2sql_SOURCES = \
 	statbag.cc \
 	unix_utility.cc \
 	zone2sql.cc \
-	zoneparser-tng.cc
+	zoneparser-tng.cc zoneparser-tng.hh
 
 zone2sql_LDADD = $(LIBCRYPTO_LIBS) $(JSON11_LIBS)
 zone2sql_LDFLAGS = $(AM_LDFLAGS) $(LIBCRYPTO_LDFLAGS)
@@ -395,7 +395,7 @@ zone2json_SOURCES = \
 	statbag.cc \
 	unix_utility.cc \
 	zone2json.cc \
-	zoneparser-tng.cc
+	zoneparser-tng.cc zoneparser-tng.hh
 
 zone2json_LDADD = $(LIBCRYPTO_LIBS) $(JSON11_LIBS)
 zone2json_LDFLAGS = $(AM_LDFLAGS) $(LIBCRYPTO_LDFLAGS)
@@ -431,7 +431,7 @@ zone2ldap_SOURCES = \
 	statbag.cc \
 	unix_utility.cc \
 	zone2ldap.cc \
-	zoneparser-tng.cc
+	zoneparser-tng.cc zoneparser-tng.hh
 
 zone2ldap_LDADD = $(LIBCRYPTO_LIBS)
 zone2ldap_LDFLAGS = $(AM_LDFLAGS) $(LIBCRYPTO_LDFLAGS)
@@ -586,7 +586,8 @@ ixplore_SOURCES = \
 	sstuff.hh \
 	statbag.cc \
 	tsigverifier.cc tsigverifier.hh \
-	unix_utility.cc zoneparser-tng.cc
+	unix_utility.cc \
+	zoneparser-tng.cc zoneparser-tng.hh
 
 ixplore_LDADD = $(LIBCRYPTO_LIBS)
 ixplore_LDFLAGS = $(AM_LDFLAGS) $(LIBCRYPTO_LDFLAGS)
@@ -1056,7 +1057,7 @@ if HAVE_PROTOC
 bin_PROGRAMS += dnspcap2protobuf
 
 dnsmessage.pb.cc: dnsmessage.proto
-	$(AM_V_GEN)$(PROTOC) --cpp_out=./ $<
+	$(AM_V_GEN)$(PROTOC) -I$(srcdir) --cpp_out=./ $<
 
 BUILT_SOURCES += dnsmessage.pb.cc
 dnspcap2protobuf.$(OBJEXT): dnsmessage.pb.cc

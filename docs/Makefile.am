@@ -30,7 +30,9 @@ MANPAGES_TARGET_TOOLS += dnspcap2protobuf.1
 endif
 endif
 
-EXTRA_DIST = manpages markdown/*.md markdown/appendix markdown/authoritative markdown/common markdown/httpapi markdown/recursor markdown/security markdown/tools $(MANPAGES_TARGET_AUTH) $(MANPAGES_TARGET_TOOLS)
+MANPAGES_MARKDOWN = $(wildcard markdown/*.md)
+
+EXTRA_DIST = manpages $(MANPAGES_MARKDOWN) markdown/appendix markdown/authoritative markdown/common markdown/httpapi markdown/recursor markdown/security markdown/tools $(MANPAGES_TARGET_AUTH) $(MANPAGES_TARGET_TOOLS)
 
 # Figure out the manpages to build/install
 MANPAGES_TARGET_ALL=$(MANPAGES_TARGET_AUTH)

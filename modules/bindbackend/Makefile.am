@@ -13,7 +13,23 @@ EXTRA_DIST = OBJECTFILES OBJECTLIBS
 
 libbindbackend_la_SOURCES = \
 	bindbackend2.cc bindbackend2.hh \
-	binddnssec.cc
+	binddnssec.cc \
+	../../pdns/arguments.hh \
+	../../pdns/backends/gsql/ssql.hh
+	../../pdns/base32.hh \
+	../../pdns/bindparserclasses.hh \
+	../../pdns/dns.hh \
+	../../pdns/dnsbackend.hh \
+	../../pdns/dnspacket.hh \
+	../../pdns/dnssecinfra.hh \
+	../../pdns/dnsseckeeper.hh \
+	../../pdns/dynlistener.hh \
+	../../pdns/lock.hh \
+	../../pdns/logger.hh \
+	../../pdns/misc.hh \
+	../../pdns/namespaces.hh
+	../../pdns/qtype.hh \
+	../../pdns/zoneparser-tng.hh
 
 libbindbackend_la_LDFLAGS = -module -avoid-version
 
