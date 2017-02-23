@@ -1426,7 +1426,10 @@ int SyncRes::doResolveAt(NsSet &nameservers, DNSName auth, bool flawedNSSet, con
         LOG(prefix<<qname<<": status=got results, this level of recursion done"<<endl);
         return 0;
       }
-      if(!newtarget.empty()) {
+
+      // Follow the CNAME target, unless we got an authoritative NXDomain already
+      // This happens when the CNAME target is NXDomain'd by the auth itself
+      if(!newtarget.empty() && !negindic) {
         if(newtarget == qname) {
           LOG(prefix<<qname<<": status=got a CNAME referral to self, returning SERVFAIL"<<endl);
           return RCode::ServFail;
