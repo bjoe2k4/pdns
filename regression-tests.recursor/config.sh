@@ -206,6 +206,7 @@ www-d.prefect.example.net.     3600 IN CNAME www.arthur.example.net.
 EOF
 
 ### zone with valid in-zone CNAME, invalid NXDOMAIN in response
+## Also, a valid CNAME chain to an NXDomain in the zone
 mkdir $PREFIX.15
 cat > $PREFIX.15/marvin.example.net.zone <<EOF
 marvin.example.net.          3600    IN  SOA $SOA
@@ -213,6 +214,9 @@ marvin.example.net.          3600    IN  NS  ns.marvin.example.net.
 ns.marvin.example.net.   3600 IN A   $PREFIX.15
 www.marvin.example.net.      3600    IN  CNAME   android.marvin.example.net.
 android.marvin.example.net.  3600    IN  A   192.0.2.5
+
+cname-to-nx.marvin.example.net. 3600 IN CNAME almost-nx.marvin.example.net.
+almost-nx.marvin.example.net.   3600 IN CNAME nxd.marvin.example.net.
 EOF
 
 cat > $PREFIX.15/prequery.lua <<EOF

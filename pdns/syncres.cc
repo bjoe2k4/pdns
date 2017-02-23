@@ -1334,17 +1334,20 @@ int SyncRes::doResolveAt(NsSet &nameservers, DNSName auth, bool flawedNSSet, con
 
         if(rec.d_place==DNSResourceRecord::AUTHORITY && rec.d_type==QType::SOA &&
            lwr.d_rcode==RCode::NXDomain && qname.isPartOf(rec.d_name) && rec.d_name.isPartOf(auth)) {
-          LOG(prefix<<qname<<": got negative caching indication for name '"<<qname<<"' (accept="<<rec.d_name.isPartOf(auth)<<"), newtarget='"<<newtarget<<"'"<<endl);
+          DNSName toCache = qname;
+          if (!newtarget.empty() && newtarget.isPartOf(rec.d_name) && newtarget.isPartOf(auth))
+            toCache = newtarget;
+          LOG(prefix<<qname<<": got negative caching indication for name '"<<toCache<<"' (accept="<<rec.d_name.isPartOf(auth)<<"), newtarget='"<<newtarget<<"'"<<endl);
 
           rec.d_ttl = min(rec.d_ttl, s_maxnegttl);
-          if(newtarget.empty()) // only add a SOA if we're not going anywhere after this
+          if(newtarget.empty() || toCache == newtarget) // only add a SOA if we're not going anywhere after this
             ret.push_back(rec);
 	  if(!wasVariable()) {
 	    NegCacheEntry ne;
 	    
 	    ne.d_qname=rec.d_name;
 	    ne.d_ttd=d_now.tv_sec + rec.d_ttl;
-	    ne.d_name=qname;
+	    ne.d_name=toCache;
 	    ne.d_qtype=QType(0); // this encodes 'whole record'
 	    ne.d_dnssecProof = harvestRecords(lwr.d_records, {QType::NSEC, QType::NSEC3});
 	    replacing_insert(t_sstorage->negcache, ne);
@@ -1356,7 +1359,7 @@ int SyncRes::doResolveAt(NsSet &nameservers, DNSName auth, bool flawedNSSet, con
 
           negindic=true;
         }
-        else if(rec.d_place==DNSResourceRecord::ANSWER && rec.d_name == qname && rec.d_type==QType::CNAME && (!(qtype==QType(QType::CNAME)))) {
+        else if(rec.d_place==DNSResourceRecord::ANSWER && (rec.d_name == qname || rec.d_name == newtarget) && rec.d_type==QType::CNAME && (!(qtype==QType(QType::CNAME)))) {
           ret.push_back(rec);
           if (auto content = getRR<CNAMERecordContent>(rec)) {
             newtarget=content->getTarget();
