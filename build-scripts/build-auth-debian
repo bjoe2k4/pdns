@@ -45,7 +45,7 @@ export VERSION_ID="${VERSION_ID}"
 
 if [ ${ID} = "ubuntu" ]; then
   if [ ${VERSION_ID} = "14.04" ]; then
-    sed -i '/lib\/systemd\/system\/pdns@\?\.service/d' debian/pdns-server.install
+    sed -i '/lib\/systemd\/system/d' debian/pdns-server.install
   fi
   if [ $VERSION_ID} = "16.10" ];then
     sed -i 's!libzmq-dev!libzmq3-dev!' debian/control.in
@@ -56,7 +56,8 @@ fakeroot debian/rules debian/control
 
 if $(echo $PDNS_VERSION | grep -q -E '^0\.0\.'); then
   # make sure we don't break dependencies for master releases
-  sed -i '/pdns-server (<< 3.4.6-2)/d' debian/control
+  sed -i -e '/pdns-server (<< 3.4.6-2)/d' \
+         -e '/pdns-server (<< 4.0.0-2~)/d' debian/control
 fi
 
 DH_OPTIONS=--parallel fakeroot debian/rules binary

@@ -14,7 +14,6 @@
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 BINARYPATH=/usr/bin
 SBINARYPATH=/usr/sbin
-SOCKETPATH=/var/run
 
 ODESC="PowerDNS Authoritative Name Server"
 DESC="$ODESC"
@@ -29,10 +28,6 @@ SCRIPTNAME=/etc/init.d/$NAME
 
 [ -r /etc/default/pdns ] && . /etc/default/pdns
 
-# Make sure that /var/run exists
-mkdir -p $SOCKETPATH
-cd $SOCKETPATH
-
 # Handle instance scripts
 suffix=$(basename $0 | cut -d- -f2- -s)
 
@@ -44,13 +39,15 @@ if [ -n "$suffix" ]; then
 	PIDFILE="/var/run/$NAME-$suffix.pid"
 fi
 
-# Define LSB log_* functions.
-. /lib/lsb/init-functions
+# Load lsb stuff for systemd redirection (if available).
+if [ -e /lib/lsb/init-functions ]; then
+  . /lib/lsb/init-functions
+fi
 
 # function to invoke properly parametrized pdns_control
 doPC()
 {
-	$CONTROL $SUFFIX $1 $2 2> /dev/null
+    $CONTROL $SUFFIX $1 $2 2> /dev/null
 	return $?
 }
 
@@ -103,100 +100,100 @@ do_stop()
 
 case "$1" in
   start)
-	[ "$VERBOSE" != no ] && log_daemon_msg "Starting $DESC" "$NAME"
+	echo -n "Starting $DESC: $NAME ..."
 	do_start
 	case "$?" in
 		0|1)
-			[ "$VERBOSE" != no ] && log_end_msg 0
+			echo done
 			exit 0
 			;;
 		2)
-			[ "$VERBOSE" != no ] && log_end_msg 1
+			echo failed
 			exit 1
 			;;
 	esac
 	;;
   stop)
-	[ "$VERBOSE" != no ] && log_daemon_msg "Stopping $DESC" "$NAME"
+	echo -n "Stopping $DESC: $NAME ..."
 	do_stop
 	case "$?" in
 		0|1)
-			[ "$VERBOSE" != no ] && log_end_msg 0
+			echo done
 			exit 0
 			;;
 		2)
-			[ "$VERBOSE" != no ] && log_end_msg 1
+			echo failed
 			exit 1
 			;;
 	esac
 	;;
   status)
 	if isrunning; then
-		log_success_msg "$NAME is running: $(doPC status)"
+		echo "$NAME is running: $(doPC status)"
 		exit 0
 	else
-		log_failure_msg "$NAME is not running"
+		echo "$NAME is not running"
 		exit 3
 	fi
 	;;
   force-stop)
-	[ "$VERBOSE" != no ] && log_daemon_msg "Killing $ODESC (all instances)" "$NAME"
+	echo -n "Killing $ODESC (all instances): $NAME ..."
 	kill -9 $(pidof pdns_server)
 	case "$?" in
 		0)
-			[ "$VERBOSE" != no ] && log_end_msg 0
+			echo done
 			exit 0
 			;;
 		1)
-			[ "$VERBOSE" != no ] && log_end_msg 1
+			echo failed
 			exit 1
 			;;
 	esac
 	;;
   restart)
-	log_daemon_msg "Restarting $DESC" "$NAME"
+	echo -n "Restarting $DESC: $NAME ..."
 	do_stop
 	case "$?" in
 		0|1)
 			do_start
 			case "$?" in
 				0)
-					log_end_msg 0
+					echo done
 					exit 0
 					;;
 				1)
-					log_end_msg 1  # Old process is still running
+					echo failed  # Old process is still running
 					exit 1
 					;;
 				*)
-					log_end_msg 1 # Failed to start
+					echo failed # Failed to start
 					exit 1
 					;;
 			esac
 			;;
 		*)
 			# Failed to stop
-			log_end_msg 1
+			echo failed
 			exit 1
 			;;
 	esac
 	;;
   reload|force-reload)
-	log_daemon_msg "Reloading $DESC" "$NAME"
+	echo -n "Reloading $DESC: $NAME ..."
 	if isrunning; then
 		doPC cycle >/dev/null
 		case "$?" in
 			0)
-				[ "$VERBOSE" != no ] && log_end_msg 0
+				echo done
 				exit 0
 				;;
 			1)
-				[ "$VERBOSE" != no ] && log_end_msg 1
+				echo failed
 				exit 1
 				;;
 		esac
 	else
-		log_end_msg 0
+		echo done
 		exit 7
 	fi
 	;;

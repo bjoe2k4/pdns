@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  install|upgrade)
+    # for upgrades from before 4.0.0-2, drop empty file created by previous postinst.
+    if [ -e /etc/powerdns/bindbackend.conf ] && echo "d41d8cd98f00b204e9800998ecf8427e /etc/powerdns/bindbackend.conf" | md5sum --check --status; then
+      rm -f /etc/powerdns/bindbackend.conf
+    fi
+  ;;
+esac
+
+#DEBHELPER#

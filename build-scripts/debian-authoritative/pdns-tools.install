@@ -1,7 +1,6 @@
 usr/bin/calidns
 usr/bin/dnsbulktest
 usr/bin/dnsgram
-usr/bin/dnspcap2protobuf
 usr/bin/dnsreplay
 usr/bin/dnsscan
 usr/bin/dnsscope

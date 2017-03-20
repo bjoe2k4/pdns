@@ -1,9 +1,10 @@
 #!/usr/bin/make -f
+DEB_HOST_ARCH_OS ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
+DEB_HOST_ARCH_BITS ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_BITS)
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 
 # Backends
 backends := bind ldap pipe gmysql godbc gpgsql gsqlite3 geoip lua mydns remote random opendbx tinydns
-
-DEB_HOST_MULTIARCH  ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 
 ENABLE_SYSTEMD := --enable-systemd --with-systemd=/lib/systemd/system
 LIBSYSTEMD_DEV := , libsystemd-dev
@@ -31,26 +32,29 @@ debian/control: debian/control.in
 
 override_dh_auto_configure:
 	test -f pdns/dnslabeltext.cc && mv pdns/dnslabeltext.cc debian/dnslabeltext.cc.moved || true
-	./configure \
-		--host=$(DEB_HOST_GNU_TYPE) \
-		--build=$(DEB_BUILD_GNU_TYPE) \
-		--prefix=/usr \
+	dh_auto_configure -- \
 		--sysconfdir=/etc/powerdns \
-		--mandir=\$${prefix}/share/man \
-		--infodir=\$${prefix}/share/info \
-		--libdir='$${prefix}/lib/$(DEB_HOST_MULTIARCH)' \
-		--libexecdir='$${prefix}/lib' \
 		--with-dynmodules="$(backends)" \
 		--with-modules="" \
 		--with-pgsql-includes=`pg_config --includedir` \
 		--enable-botan1.10 \
 		--enable-tools \
+		--without-protobuf \
 		--enable-unit-tests \
 		$(ENABLE_SYSTEMD)
 
 # pdns-server has a debug package
 override_dh_strip:
 	dh_strip --dbg-package=pdns-server-dbg
+
+override_dh_systemd_enable:
+	dh_systemd_enable --name=pdns
+
+# init script needs to be named pdns, not pdns-server. if no pdns-backend
+# is installed, start will fail, so pass --no-start. backends will trigger
+# a restart.
+override_dh_installinit:
+	dh_installinit --error-handler=initscript_error --no-start --restart-after-upgrade --name=pdns
 
 # Additional permissions
 override_dh_fixperms:
@@ -60,12 +64,6 @@ override_dh_fixperms:
 override_dh_auto_install:
 	dh_auto_install
 	rm -f debian/pdns-server/etc/powerdns/pdns.conf-dist
-
-# init script needs to be named pdns, not pdns-server
-override_dh_installinit:
-	dh_systemd_enable --name=pdns
-	dh_installinit --name=pdns
-	dh_systemd_start --restart-after-upgrade
 
 override_dh_install:
 	dh_install
@@ -90,3 +88,9 @@ override_dh_auto_test:
 override_dh_clean:
 	test -f debian/dnslabeltext.cc.moved && mv debian/dnslabeltext.cc.moved pdns/dnslabeltext.cc || true
 	dh_clean
+
+override_dh_fixperms:
+	dh_fixperms
+	# these files often contain passwords.
+	chmod 0600 debian/pdns-server/etc/powerdns/pdns.conf
+
