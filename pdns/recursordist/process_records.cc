@@ -253,5 +253,5 @@ int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtyp
   if (!gotSOA)
     return -1;
 
-  return processWasValid;
+  return 0;
 }
