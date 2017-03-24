@@ -9,7 +9,7 @@ BOOST_AUTO_TEST_CASE(test_nxdomain_normal) {
   DNSName qname("www.example.com");
   DNSName auth("example.com");
   QType qtype = QType(1);
-  vector<DNSRecord> ret;
+  DNSRecord ret;
   NegCacheEntry ne;
 
   LWResult lwr;
@@ -29,11 +29,11 @@ BOOST_AUTO_TEST_CASE(test_nxdomain_normal) {
   record.d_content = std::make_shared<SOARecordContent>(src);
   lwr.d_records.push_back(record);
 
-  DNSName ignore;
-
-  int res = processNxDomain(lwr, qname, qtype, auth, ret, ignore, ne);
+  int res = processNxDomain(lwr, qname, qtype, auth, ret, ne);
   BOOST_CHECK_EQUAL(res, 0);
-  BOOST_CHECK_EQUAL(ret.size(), 1);
+  BOOST_CHECK_EQUAL(ret.d_place, DNSResourceRecord::AUTHORITY);
+  BOOST_CHECK_EQUAL(ret.d_name, DNSName("example.com"));
+  BOOST_CHECK_EQUAL(ret.d_type, QType::SOA);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

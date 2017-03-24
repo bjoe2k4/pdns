@@ -14,4 +14,4 @@
 
 int processCNAMEs(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, DNSName &newtarget);
 int processReferral(const LWResult& lwr, const DNSName& qname, const DNSName& auth, DNSName& newauth, set<DNSName>& nsset);
-int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, DNSName &newtarget, NegCacheEntry& ne);
+int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, DNSRecord& rec, NegCacheEntry& ne);

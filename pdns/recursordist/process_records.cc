@@ -92,6 +92,14 @@ DNSName getNewTarget(const DNSName& newtarget, const vector<DNSRecord>& CNAMEs, 
  */
 int processCNAMEs(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, DNSName &newtarget) {
   if (!(lwr.d_rcode == RCode::NoError || lwr.d_rcode == RCode::NXDomain))
+    /*
+     *  How can ther be a CNAME redirection on an NXDOMAIN?
+     *  If an auth has example.com and example.net as zones, www.example.com is a
+     *  CNAME to www.example.net and www.example.net does not exist, the ANSWER will
+     *  contain the CNAME and the SOA in the AUTHORITY will be for example.net. But
+     *  as example.net is not part of example.com (our auth), we won't trust this
+     *  answer as negative.
+     */
     return -1;
 
   if (qtype == QType::CNAME)
@@ -200,29 +208,26 @@ int processReferral(const LWResult& lwr, const DNSName& qname, const DNSName& au
 }
 
 /*
- * Return values:
- * processInvalidResponse: Not a valid NXDOMAIN (e.g. no SOA in AUTHORITY)
- * processWasWrongRCode: was not NXDOMAIN
- * processWasValid: Proper NXDOMAIN, ne is filled with the correct data and ret contains the SOA
- * processWasCNAME: This was actually a CNAME redirection, newtarget contains the new target of this lookup
+ * This function checks if this is a proper NXDomain.
+ * It does *not* perform CNAME processing!
  *
- *  How can this be a CNAME redirection on an NXDOMAIN?
- *  If an auth has example.com and example.net as zones, www.example.com is a
- *  CNAME to www.example.net and www.example.net does not exist, the ANSWER will
- *  contain the CNAME and the SOA in the AUTHORITY will be for example.net. But
- *  as example.net is not part of example.com (our auth), we won't trust this
- *  answer as negative.
+ * Return values:
+ * -2 == The rcode was not NXDOMAIN
+ * -1 == This was not a proper NXDomain response
+ * 0  == This was an NXDOMAIN response, rec contains the SOA record form the AUTHORITY and NegCacheEntry is filled
+ *
+ * \param lwr    The LWResult from a reply packet
+ * \param qname  The qname we're looking for
+ * \param qtype  The qtype we're looking for
+ * \param auth   The authoritative zone we received lwr from
+ * \param rec    A DNSRecord that will contain the SOA from the AUTHORITY if this was a good NXDomain response
+ * \param ne     A NegCacheEntry that will be filled out if lwr was a good NXDomain response
  */
-int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, DNSName &newtarget, NegCacheEntry& ne) {
+int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, DNSRecord& rec, NegCacheEntry& ne) {
   if (lwr.d_rcode != RCode::NXDomain)
-    return processWasWrongRCode;
-
-  // soaRecord will be added to ret _after_ we determined the NXDOMAIN response
-  // was valid.
-  DNSRecord soaRecord;
+    return -1;
 
   bool gotSOA = false;
-  bool wasCNAME = false;
 
   for (auto& record : lwr.d_records) {
     if (record.d_class != QClass::IN && record.d_type != QType::OPT)
@@ -240,25 +245,13 @@ int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtyp
       ne.d_qname = record.d_name;
       ne.d_qtype = QType(0); // this encodes 'whole record'
       ne.d_dnssecProof = harvestRecords(lwr.d_records, {QType::NSEC, QType::NSEC3});
-      soaRecord = record;
+      rec = record;
       gotSOA = true;
-    }
-    if (record.d_place == DNSResourceRecord::ANSWER &&
-        record.d_type == QType::CNAME &&
-        (record.d_name == qname || record.d_name == newtarget)) { // TODO handle out of order CNAMEs
-      wasCNAME = true;
-      ret.push_back(record);
-      if (auto content = getRR<CNAMERecordContent>(record))
-        newtarget = content->getTarget();
     }
   }
 
   if (!gotSOA)
-    return processInvalidResponse;
+    return -1;
 
-  if (wasCNAME && !newtarget.isPartOf(ne.d_qname))
-    return processWasCNAME;
-
-  ret.push_back(soaRecord);
   return processWasValid;
 }
