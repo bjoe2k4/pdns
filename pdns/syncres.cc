@@ -67,6 +67,8 @@ std::atomic<uint64_t> SyncRes::s_throttledqueries;
 std::atomic<uint64_t> SyncRes::s_dontqueries;
 std::atomic<uint64_t> SyncRes::s_nodelegated;
 std::atomic<uint64_t> SyncRes::s_unreachables;
+uint8_t SyncRes::s_ecsipv4limit;
+uint8_t SyncRes::s_ecsipv6limit;
 unsigned int SyncRes::s_minimumTTL;
 bool SyncRes::s_doIPv6;
 bool SyncRes::s_nopacketcache;
@@ -111,8 +113,8 @@ static void accountAuthLatency(int usec, int family)
 
 
 SyncRes::SyncRes(const struct timeval& now) :  d_outqueries(0), d_tcpoutqueries(0), d_throttledqueries(0), d_timeouts(0), d_unreachables(0),
-					       d_totUsec(0), d_doDNSSEC(false), d_now(now),
-					       d_cacheonly(false), d_nocache(false), d_doEDNS0(false), d_lm(s_lm)
+					       d_totUsec(0), d_now(now),
+					       d_cacheonly(false), d_nocache(false), d_doDNSSEC(false), d_doEDNS0(false), d_lm(s_lm)
                                                  
 { 
   if(!t_sstorage) {
@@ -377,7 +379,7 @@ int SyncRes::asyncresolveWrapper(const ComboAddress& ip, bool ednsMANDATORY, con
   */
 
   SyncRes::EDNSStatus* ednsstatus;
-  ednsstatus = &t_sstorage->ednsstatus[ip]; // does this include port? 
+  ednsstatus = &t_sstorage->ednsstatus[ip]; // does this include port? YES
 
   if(ednsstatus->modeSetAt && ednsstatus->modeSetAt + 3600 < d_now.tv_sec) {
     *ednsstatus=SyncRes::EDNSStatus();
@@ -403,8 +405,13 @@ int SyncRes::asyncresolveWrapper(const ComboAddress& ip, bool ednsMANDATORY, con
     }
     else if(ednsMANDATORY || mode==EDNSStatus::UNKNOWN || mode==EDNSStatus::EDNSOK || mode==EDNSStatus::EDNSIGNORANT)
       EDNSLevel = 1;
-    
-    ret=asyncresolve(ip, domain, type, doTCP, sendRDQuery, EDNSLevel, now, srcmask, ctx, luaconfsLocal->outgoingProtobufServer, res);
+
+    if (d_asyncResolve) {
+      ret = d_asyncResolve(ip, domain, type, doTCP, sendRDQuery, EDNSLevel, now, srcmask, ctx, luaconfsLocal->outgoingProtobufServer, res);
+    }
+    else {
+      ret=asyncresolve(ip, domain, type, doTCP, sendRDQuery, EDNSLevel, now, srcmask, ctx, luaconfsLocal->outgoingProtobufServer, res);
+    }
     if(ret < 0) {
       return ret; // transport error, nothing to learn here
     }
@@ -685,7 +692,7 @@ void SyncRes::getBestNSFromCache(const DNSName &qname, const QType& qtype, vecto
       // We lost the root NS records
       primeHints();
       LOG(prefix<<qname<<": reprimed the root"<<endl);
-      getRootNS();
+      getRootNS(d_now, d_asyncResolve);
     }
   }while(subdomain.chopOff());
 }
@@ -1402,7 +1409,7 @@ int SyncRes::doResolveAt(NsSet &nameservers, DNSName auth, bool flawedNSSet, con
 	      LOG(prefix<<qname<<": query handled by Lua"<<endl);
 	    }
 	    else {
-	      ednsmask=getEDNSSubnetMask(d_requestor, qname, *remoteIP, d_incomingECSFound ? d_incomingECS : boost::none);
+	      ednsmask=getEDNSSubnetMask(d_requestor, qname, *remoteIP);
               if(ednsmask) {
                 LOG(prefix<<qname<<": Adding EDNS Client Subnet Mask "<<ednsmask->toString()<<" to query"<<endl);
               }
@@ -1579,6 +1586,36 @@ int SyncRes::doResolveAt(NsSet &nameservers, DNSName auth, bool flawedNSSet, con
   return -1;
 }
 
+boost::optional<Netmask> SyncRes::getEDNSSubnetMask(const ComboAddress& local, const DNSName&dn, const ComboAddress& rem)
+{
+  boost::optional<Netmask> result;
+  ComboAddress trunc;
+  uint8_t bits;
+  if(d_incomingECSFound) {
+    if (d_incomingECS->source.getBits() == 0) {
+      /* RFC7871 says we MUST NOT send any ECS if the source scope is 0 */
+      return result;
+    }
+    trunc = d_incomingECS->source.getMaskedNetwork();
+    bits = d_incomingECS->source.getBits();
+  }
+  else if(!local.isIPv4() || local.sin4.sin_addr.s_addr) { // detect unset 'requestor'
+    trunc = local;
+    bits = local.isIPv4() ? 32 : 128;
+  }
+  else {
+    /* nothing usable */
+    return result;
+  }
+
+  if(g_ednsdomains.check(dn) || g_ednssubnets.match(rem)) {
+    bits = std::min(bits, (trunc.isIPv4() ? s_ecsipv4limit : s_ecsipv6limit));
+    trunc.truncate(bits);
+    return boost::optional<Netmask>(Netmask(trunc, bits));
+  }
+
+  return result;
+}
 
 // used by PowerDNSLua - note that this neglects to add the packet count & statistics back to pdns_ercursor.cc
 int directResolve(const DNSName& qname, const QType& qtype, int qclass, vector<DNSRecord>& ret)
@@ -1589,5 +1626,48 @@ int directResolve(const DNSName& qname, const QType& qtype, int qclass, vector<D
   SyncRes sr(now);
   int res = sr.beginResolve(qname, QType(qtype), qclass, ret); 
   
+  return res;
+}
+
+#include "validate-recursor.hh"
+
+int SyncRes::getRootNS(struct timeval now, asyncresolve_t asyncCallback) {
+  SyncRes sr(now);
+  sr.setDoEDNS0(true);
+  sr.setNoCache();
+  sr.setDoDNSSEC(g_dnssecmode != DNSSECMode::Off);
+  sr.setAsyncCallback(asyncCallback);
+
+  vector<DNSRecord> ret;
+  int res=-1;
+  try {
+    res=sr.beginResolve(g_rootdnsname, QType(QType::NS), 1, ret);
+    if (g_dnssecmode != DNSSECMode::Off && g_dnssecmode != DNSSECMode::ProcessNoValidate) {
+      ResolveContext ctx;
+      auto state = validateRecords(ctx, ret);
+      if (state == Bogus)
+        throw PDNSException("Got Bogus validation result for .|NS");
+    }
+    return res;
+  }
+  catch(PDNSException& e)
+  {
+    L<<Logger::Error<<"Failed to update . records, got an exception: "<<e.reason<<endl;
+  }
+
+  catch(std::exception& e)
+  {
+    L<<Logger::Error<<"Failed to update . records, got an exception: "<<e.what()<<endl;
+  }
+
+  catch(...)
+  {
+    L<<Logger::Error<<"Failed to update . records, got an exception"<<endl;
+  }
+  if(!res) {
+    L<<Logger::Notice<<"Refreshed . records"<<endl;
+  }
+  else
+    L<<Logger::Error<<"Failed to update . records, RCODE="<<res<<endl;
   return res;
 }
