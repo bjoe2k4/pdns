@@ -219,6 +219,7 @@ testrunner_SOURCES = \
 	test-dnsname_cc.cc \
 	test-dnsparser_hh.cc \
 	test-dnsrecords_cc.cc \
+	test-functions.hh test-functions.cc \
 	test-iputils_hh.cc \
 	test-misc_hh.cc \
 	test-nmtree.cc \
