@@ -1,6 +1,7 @@
 #define BOOST_TEST_DYN_LINK
 #define BOOST_TEST_NO_MAIN
 #include <boost/test/unit_test.hpp>
+#include "test-functions.hh"
 #include "process_records.hh"
 
 BOOST_AUTO_TEST_SUITE(process_records_cc_processNXDomain)
@@ -13,26 +14,14 @@ BOOST_AUTO_TEST_CASE(test_nxdomain_normal) {
   NegCacheEntry ne;
 
   LWResult lwr;
-  lwr.d_rcode = RCode::NXDomain;
-  lwr.d_aabit = true;
-
-  DNSRecord record;
-  record.d_name = qname;
-  record.d_type = qtype.getCode();
-  record.d_place = DNSResourceRecord::QUESTION;
-  lwr.d_records.push_back(record);
-
-  record.d_name = DNSName("example.com");
-  record.d_type = QType::SOA;
-  record.d_place = DNSResourceRecord::AUTHORITY;
-  SOARecordContent src("ns1.example.com hostmaster.example.com 1 2 3 4 5");
-  record.d_content = std::make_shared<SOARecordContent>(src);
-  lwr.d_records.push_back(record);
+  setLWResult(&lwr, RCode::NXDomain, true, false, false);
+  addRecordToLW(&lwr, auth, QType::SOA, "ns1.example.com hostmaster.example.com 1 2 3 4 5", DNSResourceRecord::AUTHORITY);
 
   int res = processNxDomain(lwr, qname, qtype, auth, ret, ne);
+
   BOOST_CHECK_EQUAL(res, 0);
   BOOST_CHECK_EQUAL(ret.d_place, DNSResourceRecord::AUTHORITY);
-  BOOST_CHECK_EQUAL(ret.d_name, DNSName("example.com"));
+  BOOST_CHECK_EQUAL(ret.d_name, auth);
   BOOST_CHECK_EQUAL(ret.d_type, QType::SOA);
 }
 
@@ -40,7 +29,6 @@ BOOST_AUTO_TEST_SUITE_END()
 
 // Tests for processCNAMEs
 BOOST_AUTO_TEST_SUITE(process_records_cc_processCNAMEs)
-
 /* A response with a 2 stage CNAME chain
  *  www.example.net -> www2.example.net -> www.example.com
  *
@@ -49,41 +37,20 @@ BOOST_AUTO_TEST_SUITE(process_records_cc_processCNAMEs)
  *  www2.example.net CNAME www.example.com
  */
 BOOST_AUTO_TEST_CASE(test_processCNAME) {
-  DNSName qname("www.example.com");
-  DNSName qname2("www2.example.com");
-  DNSName qname3("www.example.net");
   DNSName auth("example.com");
   DNSName newtarget;
   QType qtype = QType(1);
   vector<DNSRecord> ret;
 
   LWResult lwr;
-  lwr.d_rcode = RCode::NoError;
-  lwr.d_aabit = true;
+  setLWResult(&lwr, RCode::NoError, true, false, false);
+  addRecordToLW(&lwr, "www.example.com", QType::CNAME, "www2.example.com");
+  addRecordToLW(&lwr, "www2.example.com", QType::CNAME, "www.example.net");
 
-  DNSRecord record;
-  record.d_name = qname;
-  record.d_type = qtype.getCode();
-  record.d_place = DNSResourceRecord::QUESTION;
-  lwr.d_records.push_back(record);
-
-  record.d_name = qname;
-  record.d_type = QType::CNAME;
-  record.d_place = DNSResourceRecord::ANSWER;
-  CNAMERecordContent content(qname2);
-  record.d_content = std::make_shared<CNAMERecordContent>(content);
-  lwr.d_records.push_back(record);
-
-  record.d_name = qname2;
-  CNAMERecordContent content2(qname2);
-  content2 = CNAMERecordContent(qname3);
-  record.d_content = std::make_shared<CNAMERecordContent>(content2);
-  lwr.d_records.push_back(record);
-
-  int res = processCNAMEs(lwr, qname, qtype, auth, ret, newtarget);
+  int res = processCNAMEs(lwr, DNSName("www.example.com"), qtype, auth, ret, newtarget);
   BOOST_CHECK_EQUAL(res, 0);
   BOOST_CHECK_EQUAL(ret.size(), 2);
-  BOOST_CHECK_EQUAL(newtarget, qname3);
+  BOOST_CHECK_EQUAL(newtarget, DNSName("www.example.net"));
 }
 
 /* A response with an out of order chain.
@@ -94,42 +61,20 @@ BOOST_AUTO_TEST_CASE(test_processCNAME) {
  *  www.example.net CNAME www2.example.net
  */
 BOOST_AUTO_TEST_CASE(test_processCNAME_outoforder) {
-  DNSName qname("www.example.com");
-  DNSName qname2("www2.example.com");
-  DNSName qname3("www.example.net");
   DNSName auth("example.com");
   DNSName newtarget;
   QType qtype = QType(1);
   vector<DNSRecord> ret;
 
   LWResult lwr;
-  lwr.d_rcode = RCode::NoError;
-  lwr.d_aabit = true;
+  setLWResult(&lwr, RCode::NoError, true, false, false);
+  addRecordToLW(&lwr, "www2.example.com", QType::CNAME, "www.example.net");
+  addRecordToLW(&lwr, "www.example.com", QType::CNAME, "www2.example.com");
 
-  DNSRecord record;
-  record.d_name = qname;
-  record.d_type = qtype.getCode();
-  record.d_place = DNSResourceRecord::QUESTION;
-  lwr.d_records.push_back(record);
-
-  DNSRecord record2;
-  record2.d_name = qname2;
-  record2.d_type = QType::CNAME;
-  CNAMERecordContent content2 = CNAMERecordContent(qname3);
-  record2.d_content = std::make_shared<CNAMERecordContent>(content2);
-  lwr.d_records.push_back(record2);
-
-  DNSRecord record3;
-  record3.d_name = qname;
-  record3.d_type = QType::CNAME;
-  CNAMERecordContent content(qname2);
-  record3.d_content = std::make_shared<CNAMERecordContent>(content);
-  lwr.d_records.push_back(record3);
-
-  int res = processCNAMEs(lwr, qname, qtype, auth, ret, newtarget);
+  int res = processCNAMEs(lwr, DNSName("www.example.com"), qtype, auth, ret, newtarget);
 
   BOOST_CHECK_EQUAL(res, 0);
-  BOOST_CHECK_EQUAL(newtarget, qname3);
+  BOOST_CHECK_EQUAL(newtarget, DNSName("www.example.net"));
   BOOST_CHECK_EQUAL(ret.size(), 2);
 }
 
@@ -143,21 +88,8 @@ BOOST_AUTO_TEST_CASE(test_processCNAME_nocnames) {
   vector<DNSRecord> ret;
 
   LWResult lwr;
-  lwr.d_rcode = RCode::NoError;
-  lwr.d_aabit = true;
-
-  DNSRecord record;
-  record.d_name = qname;
-  record.d_type = qtype.getCode();
-  record.d_place = DNSResourceRecord::QUESTION;
-  lwr.d_records.push_back(record);
-
-  DNSRecord record2;
-  record2.d_name = qname;
-  record2.d_type = QType::A;
-  ARecordContent content2 = ARecordContent("192.0.2.1");
-  record2.d_content = std::make_shared<ARecordContent>(content2);
-  lwr.d_records.push_back(record2);
+  setLWResult(&lwr, RCode::NoError, true, false, false);
+  addRecordToLW(&lwr, qname, QType::A, "192.0.2.1");
 
   int res = processCNAMEs(lwr, qname, qtype, auth, ret, newtarget);
 
@@ -179,25 +111,9 @@ BOOST_AUTO_TEST_CASE(test_referral) {
   set<DNSName> nsset;
 
   LWResult lwr;
-  lwr.d_rcode = RCode::NoError;
-  lwr.d_aabit = false;
-
-  DNSRecord record;
-  record.d_name = qname;
-  record.d_type = QType::A;
-  record.d_place = DNSResourceRecord::QUESTION;
-  lwr.d_records.push_back(record);
-
-  record.d_name = nsname;
-  record.d_type = QType::NS;
-  record.d_place = DNSResourceRecord::AUTHORITY;
-  NSRecordContent ns("ns1.example.com");
-  record.d_content = std::make_shared<NSRecordContent>(ns);
-  lwr.d_records.push_back(record);
-
-  NSRecordContent ns2("ns2.example.com");
-  record.d_content = std::make_shared<NSRecordContent>(ns2);
-  lwr.d_records.push_back(record);
+  setLWResult(&lwr, 0, true, false, true);
+  addRecordToLW(&lwr, nsname, QType::NS, "ns1.example.com", DNSResourceRecord::AUTHORITY, 3600);
+  addRecordToLW(&lwr, nsname, QType::NS, "ns2.example.com", DNSResourceRecord::AUTHORITY, 3600);
 
   int res = processReferral(lwr, qname, auth, newauth, nsset);
   BOOST_CHECK_EQUAL(res, 0);
@@ -213,25 +129,9 @@ BOOST_AUTO_TEST_CASE(test_referral_skipLevel) {
   set<DNSName> nsset;
 
   LWResult lwr;
-  lwr.d_rcode = RCode::NoError;
-  lwr.d_aabit = false;
-
-  DNSRecord record;
-  record.d_name = qname;
-  record.d_type = QType::A;
-  record.d_place = DNSResourceRecord::QUESTION;
-  lwr.d_records.push_back(record);
-
-  record.d_name = nsname;
-  record.d_type = QType::NS;
-  record.d_place = DNSResourceRecord::AUTHORITY;
-  NSRecordContent ns("ns1.example.com");
-  record.d_content = std::make_shared<NSRecordContent>(ns);
-  lwr.d_records.push_back(record);
-
-  NSRecordContent ns2("ns2.example.com");
-  record.d_content = std::make_shared<NSRecordContent>(ns2);
-  lwr.d_records.push_back(record);
+  setLWResult(&lwr, 0, true, false, true);
+  addRecordToLW(&lwr, nsname, QType::NS, "ns1.example.com", DNSResourceRecord::AUTHORITY, 3600);
+  addRecordToLW(&lwr, nsname, QType::NS, "ns2.example.com", DNSResourceRecord::AUTHORITY, 3600);
 
   int res = processReferral(lwr, qname, auth, newauth, nsset);
   BOOST_CHECK_EQUAL(res, 0);
@@ -239,6 +139,8 @@ BOOST_AUTO_TEST_CASE(test_referral_skipLevel) {
   BOOST_CHECK_EQUAL(newauth, nsname);
 }
 
+/* An upward referral from 'com' to '.' should be rejected
+ */
 BOOST_AUTO_TEST_CASE(test_referral_upward) {
   DNSName qname("www.example.com");
   DNSName nsname(".");
@@ -247,25 +149,9 @@ BOOST_AUTO_TEST_CASE(test_referral_upward) {
   set<DNSName> nsset;
 
   LWResult lwr;
-  lwr.d_rcode = RCode::NoError;
-  lwr.d_aabit = false;
-
-  DNSRecord record;
-  record.d_name = qname;
-  record.d_type = QType::A;
-  record.d_place = DNSResourceRecord::QUESTION;
-  lwr.d_records.push_back(record);
-
-  record.d_name = nsname;
-  record.d_type = QType::NS;
-  record.d_place = DNSResourceRecord::AUTHORITY;
-  NSRecordContent ns("ns1.example.com");
-  record.d_content = std::make_shared<NSRecordContent>(ns);
-  lwr.d_records.push_back(record);
-
-  NSRecordContent ns2("ns2.example.com");
-  record.d_content = std::make_shared<NSRecordContent>(ns2);
-  lwr.d_records.push_back(record);
+  setLWResult(&lwr, 0, true, false, true);
+  addRecordToLW(&lwr, nsname, QType::NS, "ns1.example.com", DNSResourceRecord::AUTHORITY, 3600);
+  addRecordToLW(&lwr, nsname, QType::NS, "ns2.example.com", DNSResourceRecord::AUTHORITY, 3600);
 
   int res = processReferral(lwr, qname, auth, newauth, nsset);
   BOOST_CHECK_EQUAL(res, -1);
