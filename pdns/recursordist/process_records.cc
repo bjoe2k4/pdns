@@ -37,6 +37,7 @@ static recsig_t harvestRecords(const vector<DNSRecord>& records, const set<uint1
   return ret;
 }
 
+// idem
 static bool magicAddrMatch(const QType& query, const uint16_t& answer)
 {
   if(query != QType::ADDR)
@@ -44,35 +45,17 @@ static bool magicAddrMatch(const QType& query, const uint16_t& answer)
   return answer == QType::A || answer == QType::AAAA;
 }
 
-int processAnswer(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret) {
-  if (lwr.d_rcode != RCode::NoError)
-    return -2;
-
-  bool hadAnswer = false;
-
-  for (auto& record : lwr.d_records) {
-    if (record.d_class != QClass::IN && record.d_type != QType::OPT)
-      // A non-IN record that is not OPT
-      continue;
-
-    if (!record.d_name.isPartOf(auth))
-      // Don't trust any data not part of auth
-      continue;
-
-    if (record.d_name == qname && record.d_place == DNSResourceRecord::ANSWER &&
-        (record.d_type == qtype.getCode() ||
-         (lwr.d_aabit && (qtype == QType::ANY || magicAddrMatch(qtype, record.d_type)))
-        )
-       )
-    {
-      ret.push_back(record);
-      hadAnswer = true;
-    }
-  }
-
-  if (hadAnswer)
-    return 0;
-  return -1;
+/*
+ * Returns true is the current record should be rejected.
+ *
+ * \param record The record to check
+ * \param auth The authoritative zone for this record
+ */
+static inline bool rejectRecord(const DNSRecord& record, const DNSName& auth) {
+  return (
+      record.d_class != QClass::IN || // Reject non-IN
+      record.d_type == QType::OPT ||  // Reject OPT
+      !record.d_name.isPartOf(auth)); // Reject out of bailiwick
 }
 
 /* Returns the new CNAME target for newtarget, or an empty DNSName if none is found in CNAMEs.
@@ -114,7 +97,7 @@ DNSName getNewTarget(const DNSName& newtarget, const vector<DNSRecord>& CNAMEs, 
 int processCNAMEs(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, DNSName &newtarget) {
   if (!(lwr.d_rcode == RCode::NoError || lwr.d_rcode == RCode::NXDomain))
     /*
-     *  How can ther be a CNAME redirection on an NXDOMAIN?
+     *  How can there be a CNAME redirection on an NXDOMAIN?
      *  If an auth has example.com and example.net as zones, www.example.com is a
      *  CNAME to www.example.net and www.example.net does not exist, the ANSWER will
      *  contain the CNAME and the SOA in the AUTHORITY will be for example.net. But
@@ -167,22 +150,129 @@ int processCNAMEs(const LWResult& lwr, const DNSName& qname, const QType& qtype,
 /*
  * Processes NOERROR responses
  *
-int processNoERROR(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, DNSName& newtarget) {
+ * TODO Does *NOT* deal with answers from forwarded queries.
+ *
+ * -3 == AA bit was not set.
+ * -2 == wrong rcode
+ * -1 == No answer data (and not NODATA)
+ * 0 == Answer found, ret contains the answer
+ * 1 == NODATA
+ * 2 == No answer data, but not NODATA
+ */
+int processAnswer(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, NegCacheEntry& ne) {
   if (lwr.d_rcode != RCode::NoError)
-    return -1;
+    return -2;
 
-  bool haveFinalAnswer = false;
+  if (!lwr.d_aabit) // Not trusting non-AA data for answers
+    return -3;
 
-  for (auto& record : lwr) {
-    if (record.d_place == DNSResourceRecord::ANSWER) {
-      if (record.d_name == qname && (record.d_type == qtype || record.d_type == QType::ANY)) {
-        haveFinalAnswer = true;
-        ret.push_back(record);
-      }
+  bool haveAnswer = false;
+  bool haveSOA = false;
+  DNSRecord SOARecord;
+  vector<DNSRecord> answers;
+
+  for (auto& record : lwr.d_records) {
+    if (rejectRecord(record, auth))
+      continue;
+
+    if (record.d_name == qname && record.d_place == DNSResourceRecord::ANSWER &&
+        (record.d_type == qtype.getCode() || qtype == QType::ANY || magicAddrMatch(qtype, record.d_type))) {
+      haveAnswer = true;
+      answers.push_back(record);
+      continue;
+    }
+
+    if (record.d_place == DNSResourceRecord::AUTHORITY &&
+        record.d_type == QType::SOA &&
+        qname.isPartOf(record.d_name)){
+      haveSOA = true;
+      ne.d_name = qname;
+      ne.d_qname = record.d_name;
+      ne.d_qtype = qtype;
+      ne.d_dnssecProof = harvestRecords(lwr.d_records, {QType::NSEC, QType::NSEC3});
+      SOARecord = record;
+      continue;
     }
   }
+
+  if (haveSOA && !haveAnswer) {
+    ret.push_back(SOARecord);
+    return 1;
+  }
+
+  if (haveAnswer && !haveSOA) {
+    ret.insert(ret.end(), answers.begin(), answers.end());
+    return 0;
+  }
+
+  if (!haveAnswer && !haveSOA)
+    return 2;
+
+  if (haveAnswer && haveSOA) // what?
+    return -2;
+
+  return -1;
 }
-*/
+
+/* -2 = unprocessable results
+ * 0 = Final answers
+ * 1 = NODATA
+ * 2 = Referral
+ * 3 = NXDomain
+ * 4 = CNAME redirect
+ */
+int processRecords(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret,
+    DNSName& newtarget,
+    NegCacheEntry& ne,
+    DNSName& newauth, set<DNSName>& nsset) {
+  if (!(lwr.d_rcode == RCode::NoError || lwr.d_rcode == RCode::NXDomain))
+    return -2;
+
+  // Set newtarget to qname, after processCNAME, we use newtarget for every other
+  // function call
+  newtarget = qname;
+  bool hadCNAME = false;
+  int retval;
+
+  retval = processCNAMEs(lwr, qname, qtype, auth, ret, newtarget);
+  if (retval < 0)
+    return -2;
+
+  if (retval == 0)
+    hadCNAME = true;
+
+  if (lwr.d_rcode == RCode::NoError) {
+    if (lwr.d_aabit) {
+      retval = processAnswer(lwr, newtarget, qtype, auth, ret, ne);
+      if (retval < 0)
+        return -2;
+      if (retval < 0)
+        return retval;
+    }
+
+    // No final answer, but did we have a CNAME?
+    if (hadCNAME)
+      return 4;
+
+    // No CNAME, was this a referral?
+    retval = processReferral(lwr, newtarget, auth, newauth, nsset);
+    if (retval == 0)
+      return 2;
+
+    // A NOERROR response without a CNAME chain, answer or referral... we done
+    return -2;
+  }
+
+  // NXDOMAIN
+  if (lwr.d_aabit) {
+    retval = processNxDomain(lwr, newtarget, qtype, auth, ret, ne);
+    if (retval < 0)
+      return -2;
+    return 0;
+  }
+
+  return -2;
+}
 
 /* -2 == This was not a NOERROR response
  * -1 == an upward/sideways referral was received
@@ -241,14 +331,14 @@ int processReferral(const LWResult& lwr, const DNSName& qname, const DNSName& au
  * \param qname  The qname we're looking for
  * \param qtype  The qtype we're looking for
  * \param auth   The authoritative zone we received lwr from
- * \param rec    A DNSRecord that will contain the SOA from the AUTHORITY if this was a good NXDomain response
+ * \param ret    A vector of DNSRecord where the SOA from the AUTHORITY section will be added
  * \param ne     A NegCacheEntry that will be filled out if lwr was a good NXDomain response
  */
-int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, DNSRecord& rec, NegCacheEntry& ne) {
+int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, NegCacheEntry& ne) {
   if (lwr.d_rcode != RCode::NXDomain)
     return -1;
 
-  bool gotSOA = false;
+  DNSRecord SOARecord;
 
   for (auto& record : lwr.d_records) {
     if (record.d_class != QClass::IN && record.d_type != QType::OPT)
@@ -263,16 +353,17 @@ int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtyp
         record.d_type == QType::SOA &&
         qname.isPartOf(record.d_name)) {
       // TODO return processInvalidResponse when gotSOA is already true?
+      ne.d_name = qname;
       ne.d_qname = record.d_name;
       ne.d_qtype = QType(0); // this encodes 'whole record'
       ne.d_dnssecProof = harvestRecords(lwr.d_records, {QType::NSEC, QType::NSEC3});
-      rec = record;
-      gotSOA = true;
+      SOARecord = record;
     }
   }
 
-  if (!gotSOA)
+  if (SOARecord.d_type != QType::SOA)
     return -1;
 
+  ret.push_back(SOARecord);
   return 0;
 }

@@ -10,7 +10,7 @@ BOOST_AUTO_TEST_CASE(test_nxdomain_normal) {
   DNSName qname("www.example.com");
   DNSName auth("example.com");
   QType qtype = QType(1);
-  DNSRecord ret;
+  vector<DNSRecord> ret;
   NegCacheEntry ne;
 
   LWResult lwr;
@@ -20,9 +20,12 @@ BOOST_AUTO_TEST_CASE(test_nxdomain_normal) {
   int res = processNxDomain(lwr, qname, qtype, auth, ret, ne);
 
   BOOST_CHECK_EQUAL(res, 0);
-  BOOST_CHECK_EQUAL(ret.d_place, DNSResourceRecord::AUTHORITY);
-  BOOST_CHECK_EQUAL(ret.d_name, auth);
-  BOOST_CHECK_EQUAL(ret.d_type, QType::SOA);
+  BOOST_CHECK_EQUAL(ret[0].d_place, DNSResourceRecord::AUTHORITY);
+  BOOST_CHECK_EQUAL(ret[0].d_name, auth);
+  BOOST_CHECK_EQUAL(ret[0].d_type, QType::SOA);
+  BOOST_CHECK_EQUAL(ne.d_name, qname);
+  BOOST_CHECK_EQUAL(ne.d_qname, auth);
+  BOOST_CHECK_EQUAL(ne.d_qtype.getCode(), QType::ENT);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

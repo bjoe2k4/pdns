@@ -27,6 +27,13 @@
 #include "dns.hh"
 #include "syncres.hh"
 
+/*
+ * process_records.{cc,hh} implements the algorithms to process return packets
+ * from authoritative servers. It has one entrypoint (processRecords()) that calls
+ * all other functions required.
+ */
+
 int processCNAMEs(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, DNSName &newtarget);
 int processReferral(const LWResult& lwr, const DNSName& qname, const DNSName& auth, DNSName& newauth, set<DNSName>& nsset);
-int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, DNSRecord& rec, NegCacheEntry& ne);
+int processNxDomain(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, NegCacheEntry& ne);
+int processRecords(const LWResult& lwr, const DNSName& qname, const QType& qtype, const DNSName& auth, vector<DNSRecord>& ret, DNSName& newtarget, NegCacheEntry& ne, DNSName& newauth, set<DNSName>& nsset);
