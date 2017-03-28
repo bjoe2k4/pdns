@@ -1204,106 +1204,6 @@ RCode::rcodes_ SyncRes::updateCacheFromRecords(const std::string& prefix, LWResu
   return RCode::NoError;
 }
 
-bool SyncRes::processRecords(const std::string& prefix, const DNSName& qname, const QType& qtype, const DNSName& auth, LWResult& lwr, const bool sendRDQuery, vector<DNSRecord>& ret, set<DNSName>& nsset, DNSName& newtarget, DNSName& newauth, bool& realreferral, bool& negindic, bool& sawDS)
-{
-  bool done = false;
-
-  for(auto& rec : lwr.d_records) {
-    if (rec.d_type!=QType::OPT && rec.d_class!=QClass::IN)
-      continue;
-
-    if(rec.d_place==DNSResourceRecord::AUTHORITY && rec.d_type==QType::SOA &&
-       lwr.d_rcode==RCode::NXDomain && qname.isPartOf(rec.d_name) && rec.d_name.isPartOf(auth)) {
-      LOG(prefix<<qname<<": got negative caching indication for name '"<<qname<<"' (accept="<<rec.d_name.isPartOf(auth)<<"), newtarget='"<<newtarget<<"'"<<endl);
-
-      rec.d_ttl = min(rec.d_ttl, s_maxnegttl);
-      if(newtarget.empty()) // only add a SOA if we're not going anywhere after this
-        ret.push_back(rec);
-      if(!wasVariable()) {
-        NegCacheEntry ne;
-
-        ne.d_qname=rec.d_name;
-        ne.d_ttd=d_now.tv_sec + rec.d_ttl;
-        ne.d_name=qname;
-        ne.d_qtype=QType(0); // this encodes 'whole record'
-        ne.d_dnssecProof = harvestRecords(lwr.d_records, {QType::NSEC, QType::NSEC3});
-        replacing_insert(t_sstorage->negcache, ne);
-        if(s_rootNXTrust && auth.isRoot()) { // We should check if it was forwarded here, see issue #5107
-          ne.d_name = getLastLabel(ne.d_name);
-          replacing_insert(t_sstorage->negcache, ne);
-        }
-      }
-
-      negindic=true;
-    }
-    else if(rec.d_place==DNSResourceRecord::ANSWER && rec.d_name == qname && rec.d_type==QType::CNAME && (!(qtype==QType(QType::CNAME)))) {
-      ret.push_back(rec);
-      if (auto content = getRR<CNAMERecordContent>(rec)) {
-        newtarget=content->getTarget();
-      }
-    }
-    else if((rec.d_type==QType::RRSIG || rec.d_type==QType::NSEC || rec.d_type==QType::NSEC3) && rec.d_place==DNSResourceRecord::ANSWER){
-      if(rec.d_type != QType::RRSIG || rec.d_name == qname)
-        ret.push_back(rec); // enjoy your DNSSEC
-    }
-    // for ANY answers we *must* have an authoritative answer, unless we are forwarding recursively
-    else if(rec.d_place==DNSResourceRecord::ANSWER && rec.d_name == qname &&
-            (
-              rec.d_type==qtype.getCode() || (lwr.d_aabit && (qtype==QType(QType::ANY) || magicAddrMatch(qtype, QType(rec.d_type)) ) ) || sendRDQuery
-              )
-      )
-    {
-      LOG(prefix<<qname<<": answer is in: resolved to '"<< rec.d_content->getZoneRepresentation()<<"|"<<DNSRecordContent::NumberToType(rec.d_type)<<"'"<<endl);
-
-      done=true;
-      ret.push_back(rec);
-    }
-    else if(rec.d_place==DNSResourceRecord::AUTHORITY && qname.isPartOf(rec.d_name) && rec.d_type==QType::NS) {
-      if(moreSpecificThan(rec.d_name,auth)) {
-        newauth=rec.d_name;
-        LOG(prefix<<qname<<": got NS record '"<<rec.d_name<<"' -> '"<<rec.d_content->getZoneRepresentation()<<"'"<<endl);
-        realreferral=true;
-      }
-      else {
-        LOG(prefix<<qname<<": got upwards/level NS record '"<<rec.d_name<<"' -> '"<<rec.d_content->getZoneRepresentation()<<"', had '"<<auth<<"'"<<endl);
-      }
-      if (auto content = getRR<NSRecordContent>(rec)) {
-        nsset.insert(content->getNS());
-      }
-    }
-    else if(rec.d_place==DNSResourceRecord::AUTHORITY && qname.isPartOf(rec.d_name) && rec.d_type==QType::DS) {
-      LOG(prefix<<qname<<": got DS record '"<<rec.d_name<<"' -> '"<<rec.d_content->getZoneRepresentation()<<"'"<<endl);
-      sawDS=true;
-    }
-    else if(!done && rec.d_place==DNSResourceRecord::AUTHORITY && qname.isPartOf(rec.d_name) && rec.d_type==QType::SOA &&
-            lwr.d_rcode==RCode::NoError) {
-      LOG(prefix<<qname<<": got negative caching indication for '"<< qname<<"|"<<qtype.getName()<<"'"<<endl);
-
-      if(!newtarget.empty()) {
-        LOG(prefix<<qname<<": Hang on! Got a redirect to '"<<newtarget<<"' already"<<endl);
-      }
-      else {
-        rec.d_ttl = min(s_maxnegttl, rec.d_ttl);
-        ret.push_back(rec);
-        if(!wasVariable()) {
-          NegCacheEntry ne;
-          ne.d_qname=rec.d_name;
-          ne.d_ttd=d_now.tv_sec + rec.d_ttl;
-          ne.d_name=qname;
-          ne.d_qtype=qtype;
-          ne.d_dnssecProof = harvestRecords(lwr.d_records, {QType::NSEC, QType::NSEC3});
-          if(qtype.getCode()) {  // prevents us from blacking out a whole domain
-            replacing_insert(t_sstorage->negcache, ne);
-          }
-        }
-        negindic=true;
-      }
-    }
-  }
-
-  return done;
-}
-
 /** returns:
  *  -1 in case of no results
  *  -2 when a FilterEngine Policy was hit
@@ -1515,75 +1415,60 @@ int SyncRes::doResolveAt(NsSet &nameservers, DNSName auth, bool flawedNSSet, con
       LOG(prefix<<qname<<": determining status after receiving this packet"<<endl);
 
       set<DNSName> nsset;
-      bool realreferral=false, negindic=false, sawDS=false;
       DNSName newauth;
       DNSName newtarget;
+      NegCacheEntry ne;
 
-      bool done = processRecords(prefix, qname, qtype, auth, lwr, sendRDQuery, ret, nsset, newtarget, newauth, realreferral, negindic, sawDS);
-
-      if(done){
-        LOG(prefix<<qname<<": status=got results, this level of recursion done"<<endl);
-        return 0;
-      }
-      if(!newtarget.empty()) {
-        if(newtarget == qname) {
-          LOG(prefix<<qname<<": status=got a CNAME referral to self, returning SERVFAIL"<<endl);
-          return RCode::ServFail;
-        }
-        if(depth > 10) {
-          LOG(prefix<<qname<<": status=got a CNAME referral, but recursing too deep, returning SERVFAIL"<<endl);
-          return RCode::ServFail;
-        }
-        LOG(prefix<<qname<<": status=got a CNAME referral, starting over with "<<newtarget<<endl);
-
-        set<GetBestNSAnswer> beenthere2;
-        return doResolve(newtarget, qtype, ret, depth + 1, beenthere2);
-      }
-      if(lwr.d_rcode==RCode::NXDomain) {
-        LOG(prefix<<qname<<": status=NXDOMAIN, we are done "<<(negindic ? "(have negative SOA)" : "")<<endl);
-
-        if(d_doDNSSEC)
-          addNXNSECS(ret, lwr.d_records);
-
-        return RCode::NXDomain;
-      }
-      if(nsset.empty() && !lwr.d_rcode && (negindic || lwr.d_aabit || sendRDQuery)) {
-        LOG(prefix<<qname<<": status=noerror, other types may exist, but we are done "<<(negindic ? "(have negative SOA) " : "")<<(lwr.d_aabit ? "(have aa bit) " : "")<<endl);
-        
-        if(d_doDNSSEC)
-          addNXNSECS(ret, lwr.d_records);
-        return 0;
-      }
-      else if(realreferral) {
-        LOG(prefix<<qname<<": status=did not resolve, got "<<(unsigned int)nsset.size()<<" NS, ");
-	if(sawDS) {
-	  t_sstorage->dnssecmap[newauth]=true;
-	  /*	  for(const auto& e : t_sstorage->dnssecmap)
-	    cout<<e.first<<' ';
-	    cout<<endl;*/
-	}
-        auth=newauth;
-
-        nameservers.clear();
-        for (auto const &nameserver : nsset) {
-          if (d_wantsRPZ) {
-            d_appliedPolicy = luaconfsLocal->dfe.getProcessingPolicy(nameserver, d_discardedPolicies);
-            if (d_appliedPolicy.d_kind != DNSFilterEngine::PolicyKind::NoAction) { // client query needs an RPZ response
-              LOG("however "<<nameserver<<" was blocked by RPZ policy '"<<(d_appliedPolicy.d_name ? *d_appliedPolicy.d_name : "")<<"'"<<endl);
-              return -2;
-            }
+      switch (processRecords(lwr, qname, qtype, auth, ret, newtarget, ne, newauth, nsset)) {
+        case 0:
+          LOG(prefix<<qname<<": status=got results, this level of recursion done"<<endl);
+          return 0;
+        case 4:
+          if(newtarget == qname) {
+            LOG(prefix<<qname<<": status=got a CNAME referral to self, returning SERVFAIL"<<endl);
+            return RCode::ServFail;
           }
-          nameservers.insert({nameserver, {{}, false}});
-        }
-        LOG("looping to them"<<endl);
-        break;
+          if(depth > 10) {
+            LOG(prefix<<qname<<": status=got a CNAME referral, but recursing too deep, returning SERVFAIL"<<endl);
+            return RCode::ServFail;
+          }
+          LOG(prefix<<qname<<": status=got a CNAME referral, starting over with "<<newtarget<<endl);
+          set<GetBestNSAnswer> beenthere2;
+          return doResolve(newtarget, qtype, ret, depth + 1, beenthere2);
+        case 1:
+          LOG(prefix<<qname<<": status=noerror, other types may exist, but we are done "<<(lwr.d_aabit ? "(have aa bit) " : "")<<endl);
+          return 0;
+        case 3:
+          LOG(prefix<<qname<<": status=NXDOMAIN, we are done "<<(negindic ? "(have negative SOA)" : "")<<endl);
+          //if(d_doDNSSEC)
+          //  addNXNSECS(ret, lwr.d_records);
+          return RCode::NXDomain;
+        case 2:
+          LOG(prefix<<qname<<": status=did not resolve, got "<<(unsigned int)nsset.size()<<" NS, ");
+          /*
+          if(sawDS) {
+            t_sstorage->dnssecmap[newauth]=true;
+          }
+          */
+          auth=newauth;
+
+          nameservers.clear();
+          for (auto const &nameserver : nsset) {
+            if (d_wantsRPZ) {
+              d_appliedPolicy = luaconfsLocal->dfe.getProcessingPolicy(nameserver, d_discardedPolicies);
+              if (d_appliedPolicy.d_kind != DNSFilterEngine::PolicyKind::NoAction) { // client query needs an RPZ response
+                LOG("however "<<nameserver<<" was blocked by RPZ policy '"<<(d_appliedPolicy.d_name ? *d_appliedPolicy.d_name : "")<<"'"<<endl);
+                return -2;
+              }
+            }
+            nameservers.insert({nameserver, {{}, false}});
+          }
+          LOG("looping to them"<<endl);
+          break;
       }
-      else if(!tns->empty()) { // means: not OOB, OOB == empty
-        goto wasLame;
-      }
+      return -1;
     }
   }
-  return -1;
 }
 
 boost::optional<Netmask> SyncRes::getEDNSSubnetMask(const ComboAddress& local, const DNSName&dn, const ComboAddress& rem)

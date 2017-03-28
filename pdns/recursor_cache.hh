@@ -44,6 +44,19 @@
 #include "namespaces.hh"
 using namespace ::boost::multi_index;
 
+struct NegCacheEntry
+{
+  DNSName d_name;
+  QType d_qtype;
+  DNSName d_qname;
+  uint32_t d_ttd;
+  uint32_t getTTD() const
+  {
+    return d_ttd;
+  }
+  recsig_t d_dnssecProof;
+};
+
 class MemRecursorCache : public boost::noncopyable //  : public RecursorCache
 {
 public:

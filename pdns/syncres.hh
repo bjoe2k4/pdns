@@ -48,6 +48,7 @@
 #include "validate.hh"
 #include "ednssubnet.hh"
 #include "filterpo.hh"
+#include "process_records.hh"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -581,7 +582,6 @@ private:
 
   vector<ComboAddress> retrieveAddressesForNS(const std::string& prefix, const DNSName& qname, vector<DNSName >::const_iterator& tns, const unsigned int depth, set<GetBestNSAnswer>& beenthere, const vector<DNSName >& rnameservers, NsSet& nameservers, bool& sendRDQuery, bool& pierceDontQuery, bool& flawedNSSet);
   RCode::rcodes_ updateCacheFromRecords(const std::string& prefix, LWResult& lwr, const DNSName& qname, const DNSName& auth, NsSet& nameservers, const DNSName& tns, const boost::optional<Netmask>);
-  bool processRecords(const std::string& prefix, const DNSName& qname, const QType& qtype, const DNSName& auth, LWResult& lwr, const bool sendRDQuery, vector<DNSRecord>& ret, set<DNSName>& nsset, DNSName& newtarget, DNSName& newauth, bool& realreferral, bool& negindic, bool& sawDS);
 
   bool doSpecialNamesResolve(const DNSName &qname, const QType &qtype, const uint16_t &qclass, vector<DNSRecord> &ret);
 

@@ -215,7 +215,7 @@ int processAnswer(const LWResult& lwr, const DNSName& qname, const QType& qtype,
 }
 
 /* -2 = unprocessable results
- * 0 = Final answers
+ * 0 = Final answer (DONE!)
  * 1 = NODATA
  * 2 = Referral
  * 3 = NXDomain
