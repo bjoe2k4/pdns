@@ -132,7 +132,7 @@ int SyncRes::beginResolve(const DNSName &qname, const QType &qtype, uint16_t qcl
   if (doSpecialNamesResolve(qname, qtype, qclass, ret))
     return 0;
 
-  if( (qtype.getCode() == QType::AXFR))
+  if( (qtype.getCode() == QType::AXFR) || (qtype.getCode() == QType::IXFR))
     return -1;
 
   if(qclass==QClass::ANY)
@@ -490,12 +490,16 @@ int SyncRes::doResolve(const DNSName &qname, const QType &qtype, vector<DNSRecor
 	  boost::optional<Netmask> nm;
           res=asyncresolveWrapper(remoteIP, d_doDNSSEC, qname, qtype.getCode(), false, false, &d_now, nm, &lwr);
           // filter out the good stuff from lwr.result()
-
-	  for(const auto& rec : lwr.d_records) {
-            if(rec.d_place == DNSResourceRecord::ANSWER)
-              ret.push_back(rec);
+          if (res == 1) {
+            for(const auto& rec : lwr.d_records) {
+              if(rec.d_place == DNSResourceRecord::ANSWER)
+                ret.push_back(rec);
+            }
+            return 0;
           }
-          return res;
+          else {
+            return RCode::ServFail;
+          }
         }
       }
     }
