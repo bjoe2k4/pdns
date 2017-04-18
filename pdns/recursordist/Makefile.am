@@ -201,6 +201,7 @@ testrunner_SOURCES = \
 	namespaces.hh \
 	nsecrecords.cc \
 	pdnsexception.hh \
+	process_records.cc process_records.hh \
 	protobuf.cc protobuf.hh \
 	qtype.cc qtype.hh \
 	randomhelper.cc \
@@ -223,10 +224,12 @@ testrunner_SOURCES = \
 	test-dnsparser_hh.cc \
 	test-dnsrecords_cc.cc \
 	test-ednsoptions_cc.cc \
+	test-functions.hh \
 	test-iputils_hh.cc \
 	test-misc_hh.cc \
 	test-nmtree.cc \
 	test-negcache_cc.cc \
+	test-process_records_cc.cc \
 	test-rcpgenerator_cc.cc \
 	test-recpacketcache_cc.cc \
 	test-syncres_cc.cc \
