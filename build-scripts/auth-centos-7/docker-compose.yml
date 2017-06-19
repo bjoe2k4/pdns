@@ -1,0 +1,11 @@
+version: '2'
+services:
+    pdns-auth-centos-7:
+        build:
+            context: ../..
+            dockerfile: build-scripts/auth-centos-7/Dockerfile
+            args:
+                VERSION: ${VERSION}
+                RELEASE: ${RELEASE}
+        volumes:
+          - ../..:/local

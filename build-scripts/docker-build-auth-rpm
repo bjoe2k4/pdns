@@ -1,0 +1,27 @@
+#!/bin/sh
+
+os=$2
+product=$1
+
+if [ -z "$1" -o -z "$2" ]; then
+  echo "USAGE: $0 <product> <os>"
+  echo "Supported products: auth"
+  echo "Supported os targets: centos-7"
+  exit 1
+fi
+
+set -ex
+
+if [ -z "${VERSION}" ]; then
+  VERSION="$(./build-aux/gen-version)"
+fi
+
+if [ -z "${RELEASE}" ]; then
+  RELEASE="1pdns%{dist}"
+fi
+
+export VERSION
+export RELEASE
+
+docker-compose -f pkgbuild/${product}-${os}/docker-compose.yml build
+docker-compose -f pkgbuild/${product}-${os}/docker-compose.yml run --rm pdns-${product}-${os} find /build -name pdns-\*.rpm -print -exec cp -f '{}' /local/ \;
