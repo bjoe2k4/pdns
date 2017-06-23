@@ -1,6 +1,6 @@
 version: '2'
 services:
-    pdns-auth-centos-7:
+    pdnsauth:
         build:
             context: ../..
             dockerfile: build-scripts/auth-centos-7/Dockerfile
