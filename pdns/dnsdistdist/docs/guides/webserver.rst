@@ -140,7 +140,7 @@ JSON Objects
   - ``ecs-source-prefix-v6`` The currently configured :func:`setECSSourcePrefixV6`
   - ``fixup-case``
   - ``max-outstanding``
-  - ``server-policy`` The currently set :ref:`ServerPolicy`
+  - ``server-policy`` The currently set :doc:`serverselection`
   - ``stale-cache-entries-ttl``
   - ``tcp-recv-timeout``
   - ``tcp-send-timeout``

@@ -7,6 +7,7 @@ These chapters contain extensive information on all functions and object availab
   :maxdepth: 3
 
   config
+  constants
   comboaddress
   dnsname
   dq
@@ -15,4 +16,3 @@ These chapters contain extensive information on all functions and object availab
   protobuf
   snmp
   tuning
-
